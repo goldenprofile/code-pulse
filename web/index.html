@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code Pulse · Дашборд проектов</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>📡</text></svg>">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="logo">📡</span>
+    <div>
+      <h1>Code Pulse</h1>
+      <div class="sub" id="rootPath">телеграфия качества кода</div>
+    </div>
+  </div>
+  <nav id="tabs">
+    <button class="tab active" data-tab="overview">Обзор</button>
+    <button class="tab" data-tab="graph">Граф качества</button>
+    <button class="tab hidden" data-tab="project" id="projectTab">Проект</button>
+  </nav>
+  <div class="actions">
+    <button id="btnRefresh" title="Пересканировать живое состояние">⟳ Обновить</button>
+    <button id="btnBackfill" title="Пересчитать историю метрик по git-коммитам">⟲ История 30д</button>
+  </div>
+</header>
+
+<div id="progressBar" class="hidden">
+  <div class="bar"><div id="progressFill"></div></div>
+  <div id="progressText"></div>
+</div>
+
+<main>
+  <!-- ============================== ОБЗОР ============================== -->
+  <section id="view-overview">
+    <div id="summaryStrip" class="strip"></div>
+    <div id="filters">
+      <input id="search" type="search" placeholder="Поиск проекта…">
+      <select id="stackFilter">
+        <option value="">все стеки</option>
+        <option value="python">python</option>
+        <option value="node">node</option>
+        <option value="docker">docker</option>
+        <option value="—">без стека</option>
+      </select>
+      <select id="gitFilter">
+        <option value="">git: все</option>
+        <option value="dirty">только с изменениями</option>
+        <option value="clean">только чистые</option>
+        <option value="nogit">без git</option>
+      </select>
+      <span id="countLabel" class="muted"></span>
+    </div>
+    <div id="cards" class="cards"></div>
+  </section>
+
+  <!-- ============================== ГРАФ =============================== -->
+  <section id="view-graph" class="hidden">
+    <div class="graph-legend">
+      <span><i class="dot" style="background:#3fb950"></i> качество растёт</span>
+      <span><i class="dot" style="background:#d29922"></i> стабильно</span>
+      <span><i class="dot" style="background:#f85149"></i> качество падает</span>
+      <span><i class="line"></i> временное зацепление репозиториев</span>
+      <span class="muted">размер узла — техдолг (SLOC × (100−MI)) · клик — карточка проекта</span>
+    </div>
+    <canvas id="graphCanvas"></canvas>
+    <div id="graphTooltip" class="hidden"></div>
+  </section>
+
+  <!-- ============================= ПРОЕКТ ============================== -->
+  <section id="view-project" class="hidden">
+    <div id="projectHeader"></div>
+    <div class="grid2">
+      <div class="panel">
+        <h3>Динамика качества, 30 дней</h3>
+        <div id="subToggles" class="chips"></div>
+        <canvas id="qualityChart" height="220"></canvas>
+      </div>
+      <div class="panel">
+        <h3>Churn по неделям (+/− строк)</h3>
+        <canvas id="churnChart" height="220"></canvas>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="panel">
+        <h3>Архитектура: пакеты (Ca / Ce / I / A / D)</h3>
+        <div class="table-wrap"><table id="pkgTable"></table></div>
+      </div>
+      <div class="panel">
+        <h3>Хотспоты: сложность × частота изменений (30д)</h3>
+        <div class="table-wrap"><table id="hotspotTable"></table></div>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="panel">
+        <h3>Временное зацепление файлов</h3>
+        <div class="table-wrap"><table id="temporalTable"></table></div>
+      </div>
+      <div class="panel">
+        <h3>Самые тяжёлые файлы</h3>
+        <div class="table-wrap"><table id="worstTable"></table></div>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="panel">
+        <h3>Живое состояние</h3>
+        <div id="liveDetail"></div>
+      </div>
+      <div class="panel">
+        <h3>Возраст кода (доля SLOC по последнему изменению)</h3>
+        <div id="ageBars"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span class="muted" id="lastScan"></span>
+  <span class="muted">Code Pulse · метрики: cognitive complexity (Sonar-адаптация) · MI (radon-калибровка) · LCOM4 · Ca/Ce/Instability/D · cycles · duplication · hotspots · temporal coupling</span>
+</footer>
+
+<script src="/chart.umd.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "root": "D:/Projects",
+  "exclude_projects": ["node_modules", "CDN"],
+  "port": 8787,
+  "days": 30,
+  "step_days": 3,
+  "auto_open": true
+}
