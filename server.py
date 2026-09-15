@@ -23,12 +23,10 @@ CONTENT_TYPES = {
 
 
 class App:
-    def __init__(self, root: Path, store, status: scanner.Status,
-                 exclude: set[str] | None = None):
+    def __init__(self, root: Path, store, status: scanner.Status):
         self.root = root
         self.store = store
         self.status = status
-        self.exclude = exclude or set()
         self._git_cache: dict[str, object] = {}
         self._git_cache_ts: float = 0.0
 
@@ -172,9 +170,19 @@ class App:
         self._git_cache_ts = 0.0
 
     # --------------------------------------------------------------- потоки
-    def run_refresh(self) -> None:
+    def run_refresh(self, names: set | None = None) -> None:
+        """Живое сканирование; names — только указанные проекты (вкл. из настроек).
+
+        После скана — быстрый проход бэкфилла: уже посчитанные деревья
+        пропускаются, добираются только новые сэмплы (в т.ч. по нововключённому
+        проекту — сразу строится история за месяц).
+        """
         try:
-            scanner.scan_all(self.root, self.store, self.status, self.exclude)
+            scanner.scan_all(self.root, self.store, self.status,
+                             self.store.get_excludes(), names=names)
+            if names:
+                scanner.backfill(self.root, self.store, self.status,
+                                 exclude=self.store.get_excludes())
         except Exception as exc:  # noqa: BLE001
             self.status.update(error=str(exc)[:300])
         finally:
@@ -182,11 +190,51 @@ class App:
 
     def run_backfill(self, days: int, step: int) -> None:
         try:
-            scanner.backfill(self.root, self.store, self.status, days, step, self.exclude)
+            scanner.backfill(self.root, self.store, self.status, days, step,
+                             exclude=self.store.get_excludes())
         except Exception as exc:  # noqa: BLE001
             self.status.update(error=str(exc)[:300])
         finally:
             self.invalidate()
+
+    # ------------------------------------------------------------- настройки
+    def settings(self) -> dict:
+        """Список проектов на диске + текущие исключения."""
+        excludes = self.store.get_excludes()
+        known = {p["name"]: p for p in self.store.projects()}
+        items = []
+        for d in scanner.discover_projects(self.root, set()):
+            item = {
+                "name": d.name,
+                "excluded": d.name in excludes,
+                "is_git": (d / ".git").exists(),
+                "tracked": d.name in known,
+            }
+            if item["tracked"]:
+                item["stack"] = known[d.name]["stack"]
+                snaps = self.store.snapshots(d.name)
+                if snaps:
+                    item["score"] = snaps[-1]["score"]
+            items.append(item)
+        items.sort(key=lambda x: (x["excluded"], x["name"].lower()))
+        return {"root": str(self.root), "excludes": sorted(excludes), "projects": items}
+
+    def set_excluded(self, name: str, excluded: bool) -> dict:
+        d = self.root / name
+        if not d.is_dir() or d.parent != self.root:
+            return {"ok": False, "reason": "нет такого каталога в корне"}
+        excludes = self.store.get_excludes()
+        if excluded and name not in excludes:
+            excludes.add(name)
+            self.store.set_excludes(excludes)
+            self.store.remove_project(name)  # мгновенно исчезает с дашборда
+            self.invalidate()
+        elif not excluded and name in excludes:
+            excludes.discard(name)
+            self.store.set_excludes(excludes)
+            threading.Thread(target=self.run_refresh, args=({name},),
+                             daemon=True).start()
+        return {"ok": True, "excludes": sorted(excludes)}
 
 
 def _brief(metrics: dict | None) -> dict:
@@ -230,6 +278,8 @@ def make_handler(app: App):
                     self._json(app.graph())
                 elif route == "/api/status":
                     self._json(app.status.snapshot())
+                elif route == "/api/settings":
+                    self._json(app.settings())
                 elif route.startswith("/api/"):
                     self._json({"error": "unknown"}, 404)
                 else:
@@ -246,6 +296,13 @@ def make_handler(app: App):
             if route == "/api/refresh":
                 threading.Thread(target=app.run_refresh, daemon=True).start()
                 self._json({"ok": True})
+            elif route == "/api/settings/exclude":
+                length = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(length) or b"{}")
+                name = str(body.get("name", ""))
+                excluded = bool(body.get("excluded", False))
+                result = app.set_excluded(name, excluded)
+                self._json(result, 200 if result.get("ok") else 400)
             elif route == "/api/backfill":
                 length = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(length) or b"{}")

@@ -581,6 +581,76 @@ function showTab(name) {
   if (name === "overview") renderCards();
 }
 
+/* ------------------------------------------------------------- настройки */
+let settingsData = null;
+
+async function openSettings() {
+  $("#settingsModal").classList.remove("hidden");
+  $("#settingsSearch").value = "";
+  settingsData = await api("/api/settings");
+  renderSettings();
+}
+
+function closeSettings() { $("#settingsModal").classList.add("hidden"); }
+
+function renderSettings() {
+  if (!settingsData) return;
+  const q = $("#settingsSearch").value.trim().toLowerCase();
+  const items = settingsData.projects.filter((p) =>
+    !q || p.name.toLowerCase().includes(q));
+  const on = settingsData.projects.filter((p) => !p.excluded).length;
+  $("#settingsCounts").textContent =
+    `${on} включено · ${settingsData.projects.length - on} исключено`;
+  $("#settingsList").innerHTML = items.map((p) => {
+    const meta = [
+      p.excluded ? "исключён — не сканируется"
+        : (!p.tracked ? "новый — попадёт в дашборд при скане" : (p.stack || "")),
+      p.score != null ? `скор ${Math.round(p.score)}` : "",
+      p.is_git ? "" : "без git",
+    ].filter(Boolean).join(" · ");
+    return `
+    <div class="settings-row ${p.excluded ? "excluded" : ""}">
+      <label class="switch" title="${p.excluded ? "Включить" : "Исключить"}">
+        <input type="checkbox" data-name="${esc(p.name)}" ${p.excluded ? "" : "checked"}>
+        <span class="slider"></span>
+      </label>
+      <span class="name">${esc(p.name)}</span>
+      <span class="meta">${esc(meta)}</span>
+    </div>`;
+  }).join("") || `<div class="muted" style="padding:12px">Не найдено.</div>`;
+  $("#settingsList").querySelectorAll("input[type=checkbox]").forEach((inp) => {
+    inp.onchange = () => toggleExclude(inp.dataset.name, !inp.checked, inp);
+  });
+}
+
+async function toggleExclude(name, excluded, inp) {
+  inp.disabled = true;
+  try {
+    const res = await api("/api/settings/exclude", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, excluded }),
+    });
+    if (!res.ok) { inp.disabled = false; return; }
+    // локально обновляем состояние строки
+    const item = settingsData.projects.find((p) => p.name === name);
+    if (item) item.excluded = excluded;
+    renderSettings();
+    if (excluded) {
+      await loadOverview();                       // проект исчез сразу
+    } else {
+      pollStatus(async () => {                    // включён — ждём точечный скан
+        await loadOverview();
+        const it = settingsData?.projects.find((p) => p.name === name);
+        if (it && it.tracked) renderSettings();
+      });
+    }
+  } catch (e) {
+    inp.disabled = false;
+    console.error(e);
+  }
+}
+
 /* ---------------------------------------------------------------- старт */
 async function loadOverview() {
   state.overview = await api("/api/overview");
@@ -595,6 +665,7 @@ function applyHash() {
     return;
   }
   if (location.hash === "#graph") showTab("graph");
+  if (location.hash === "#settings") openSettings();
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -620,6 +691,16 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     pollStatus(async () => { await loadOverview(); });
   };
+
+  $("#btnSettings").onclick = openSettings;
+  $("#btnCloseSettings").onclick = closeSettings;
+  $("#settingsModal").onclick = (ev) => {
+    if (ev.target === $("#settingsModal")) closeSettings();
+  };
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") closeSettings();
+  });
+  $("#settingsSearch").oninput = renderSettings;
 
   pollStatus(loadOverview);
   loadOverview().then(applyHash);

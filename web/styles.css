@@ -141,3 +141,34 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 footer { padding: 10px 20px 24px; display: flex; justify-content: space-between; gap: 20px;
   flex-wrap: wrap; border-top: 1px solid var(--border); margin-top: 20px; }
+
+/* ----------------------------- настройки ----------------------------- */
+.modal { position: fixed; inset: 0; background: #000a; z-index: 50;
+  display: flex; align-items: flex-start; justify-content: center; padding: 60px 20px 20px; }
+.modal-box { background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  width: min(720px, 100%); max-height: calc(100vh - 100px); display: flex; flex-direction: column;
+  padding: 18px 20px; box-shadow: 0 20px 60px #000c; }
+.modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.modal-head h3 { margin: 0; font-size: 16px; }
+.icon-btn { background: none; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 8px; width: 30px; height: 30px; cursor: pointer; font-size: 14px; }
+.icon-btn:hover { color: var(--text); border-color: var(--accent); }
+.settings-toolbar { display: flex; gap: 10px; align-items: center; margin: 10px 0; }
+.settings-toolbar input { flex: 1; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font-size: 13px; }
+.settings-list { overflow-y: auto; border-top: 1px solid var(--border); }
+.settings-row { display: flex; align-items: center; gap: 12px; padding: 8px 4px;
+  border-bottom: 1px solid #21262d55; }
+.settings-row .name { font-weight: 600; min-width: 200px; word-break: break-all; }
+.settings-row .meta { color: var(--muted); font-size: 12px; flex: 1; }
+.settings-row.excluded .name { color: var(--muted); text-decoration: line-through;
+  text-decoration-color: #8b949e66; }
+.switch { position: relative; width: 38px; height: 21px; flex-shrink: 0; cursor: pointer; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .slider { position: absolute; inset: 0; background: var(--border); border-radius: 11px;
+  transition: background .18s; }
+.switch .slider::before { content: ""; position: absolute; width: 15px; height: 15px;
+  left: 3px; top: 3px; background: var(--muted); border-radius: 50%; transition: transform .18s, background .18s; }
+.switch input:checked + .slider { background: #238636; }
+.switch input:checked + .slider::before { transform: translateX(17px); background: #fff; }
+.switch input:disabled + .slider { opacity: .5; cursor: wait; }

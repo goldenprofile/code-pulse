@@ -24,6 +24,7 @@
   <div class="actions">
     <button id="btnRefresh" title="Пересканировать живое состояние">⟳ Обновить</button>
     <button id="btnBackfill" title="Пересчитать историю метрик по git-коммитам">⟲ История 30д</button>
+    <button id="btnSettings" title="Исключения проектов">⚙</button>
   </div>
 </header>
 
@@ -120,6 +121,25 @@
   <span class="muted" id="lastScan"></span>
   <span class="muted">Code Pulse · метрики: cognitive complexity (Sonar-адаптация) · MI (radon-калибровка) · LCOM4 · Ca/Ce/Instability/D · cycles · duplication · hotspots · temporal coupling</span>
 </footer>
+
+<!-- ============================ НАСТРОЙКИ ============================ -->
+<div id="settingsModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3>Проекты и исключения</h3>
+      <button id="btnCloseSettings" class="icon-btn">✕</button>
+    </div>
+    <p class="muted">Тумблер выключен — проект не сканируется и исчезает с дашборда
+      (данные остаются в истории). Системные каталоги (<span class="file">node_modules</span>,
+      <span class="file">.venv</span>, <span class="file">dist</span>…) пропускаются всегда.
+      Включение запускает точечное сканирование со сбором истории за 30 дней.</p>
+    <div class="settings-toolbar">
+      <input id="settingsSearch" type="search" placeholder="Поиск проекта…">
+      <span id="settingsCounts" class="muted"></span>
+    </div>
+    <div id="settingsList" class="settings-list"></div>
+  </div>
+</div>
 
 <script src="/chart.umd.min.js"></script>
 <script src="/app.js"></script>

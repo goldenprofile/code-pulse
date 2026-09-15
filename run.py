@@ -64,8 +64,11 @@ def main() -> None:
 
     store = Store(ROOT_DIR / "data" / "code-pulse.db")
     status = scanner.Status()
-    exclude = set(cfg.get("exclude_projects", []))
-    app = App(root, store, status, exclude)
+    # исключения теперь живут в БД и правятся через интерфейс (⚙);
+    # config.json — только первичный сид при первом запуске
+    if store.get_meta("exclude_projects") is None:
+        store.set_excludes(set(cfg.get("exclude_projects", [])))
+    app = App(root, store, status)
 
     def console_status() -> None:
         while status.phase != "idle":

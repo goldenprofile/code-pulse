@@ -258,11 +258,19 @@ def _subs_for(metrics: dict) -> dict:
         metrics.get("totals", {}), metrics.get("coupling"), metrics.get("dup_ratio", 0))
 
 
-def scan_all(root: Path, store, status: Status, exclude: set[str] | None = None,
-             workers: int = 6) -> dict:
-    """Полное живое сканирование: метрики worktree + git-состояние всех проектов."""
+def scan_all(root: Path, store, status: Status, exclude: set | None = None,
+             workers: int = 6, names: set | None = None,
+             cleanup: bool = True) -> dict:
+    """Живое сканирование проектов.
+
+    names — если задано, сканируются только эти проекты (без очистки БД);
+    cleanup — убрать из БД исключённые и исчезнувшие каталоги.
+    """
     status.update(phase="scan", done=0, error="", started=time.time())
     projects = discover_projects(root, exclude)
+    if names:
+        projects = [p for p in projects if p.name in names]
+        cleanup = False
     tasks = [(str(p), None) for p in projects]
     status.update(total=len(tasks), current="")
     results: Dict[str, dict] = {}
@@ -303,10 +311,11 @@ def scan_all(root: Path, store, status: Status, exclude: set[str] | None = None,
                              "error": res.get("error", "нет исходников")}
 
     # убираем из БД исключённые конфигом и исчезнувшие каталоги
-    keep = {p.name for p in projects}
-    for row in store.projects():
-        if row["name"] not in keep or not Path(row["path"]).exists():
-            store.remove_project(row["name"])
+    if cleanup:
+        keep = {p.name for p in projects}
+        for row in store.projects():
+            if row["name"] not in keep or not Path(row["path"]).exists():
+                store.remove_project(row["name"])
     status.update(phase="idle", current="", done=len(tasks), total=len(tasks))
     return summary
 

@@ -63,6 +63,15 @@ class Store:
             row = self._conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
             return row["value"] if row else default
 
+    def get_excludes(self) -> set:
+        try:
+            return set(json.loads(self.get_meta("exclude_projects", "[]")))
+        except (json.JSONDecodeError, TypeError):
+            return set()
+
+    def set_excludes(self, names) -> None:
+        self.set_meta("exclude_projects", json.dumps(sorted(names), ensure_ascii=False))
+
     # ------------------------------------------------------------ projects
     def upsert_project(self, name: str, path: str, is_git: bool, stack: str) -> None:
         with self._lock:
