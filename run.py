@@ -31,6 +31,7 @@ DEFAULT_CONFIG = {
     "days": 30,
     "step_days": 3,
     "auto_open": True,
+    "alerts": {"score_drop_7d": 5},
 }
 
 
@@ -68,7 +69,10 @@ def main() -> None:
     # config.json — только первичный сид при первом запуске
     if store.get_meta("exclude_projects") is None:
         store.set_excludes(set(cfg.get("exclude_projects", [])))
-    app = App(root, store, status)
+    # порог алерта деградации: ключ alerts в config.json опционален,
+    # иначе берётся значение из DEFAULT_CONFIG
+    alert_drop = float((cfg.get("alerts") or {}).get("score_drop_7d", 5))
+    app = App(root, store, status, alert_drop=alert_drop)
 
     def console_status() -> None:
         while status.phase != "idle":

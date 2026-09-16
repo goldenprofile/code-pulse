@@ -42,6 +42,29 @@ header {
 .actions button:hover { border-color: var(--accent); }
 .actions button:disabled { opacity: .5; cursor: wait; }
 
+.btn-export {
+  display: inline-block; margin-top: 6px;
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 12px; cursor: pointer; font-size: 13px;
+  text-decoration: none;
+}
+.btn-export:hover { border-color: var(--accent); }
+
+/* ------------------------ живое автообновление (SSE) ------------------- */
+.live-status { display: flex; align-items: center; gap: 6px; }
+.dot-live {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  background: var(--green);
+}
+.dot-live.busy {
+  background: var(--amber);
+  animation: live-pulse 1.2s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .4; transform: scale(1.3); }
+}
+
 #progressBar { padding: 6px 20px; background: var(--panel2); border-bottom: 1px solid var(--border); }
 #progressBar .bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
 #progressFill { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
@@ -87,6 +110,7 @@ main { padding: 16px 20px 40px; }
 .badge.conflict { color: var(--red); border-color: var(--red); }
 .delta-up { color: var(--green); font-weight: 600; }
 .delta-down { color: var(--red); font-weight: 600; }
+.badge.alert { color: var(--red); border-color: var(--red); }
 
 .ring { position: relative; width: 52px; height: 52px; flex-shrink: 0; }
 .ring svg { transform: rotate(-90deg); }

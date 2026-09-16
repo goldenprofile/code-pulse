@@ -16,6 +16,9 @@
       <div class="sub" id="rootPath">телеграфия качества кода</div>
     </div>
   </div>
+  <span class="live-status" title="Живое автообновление (SSE)">
+    <span id="liveDot" class="dot-live"></span><span id="liveText" class="muted">живое обновление</span>
+  </span>
   <nav id="tabs">
     <button class="tab active" data-tab="overview">Обзор</button>
     <button class="tab" data-tab="graph">Граф качества</button>
@@ -51,6 +54,10 @@
         <option value="dirty">только с изменениями</option>
         <option value="clean">только чистые</option>
         <option value="nogit">без git</option>
+      </select>
+      <select id="alertFilter" title="Фильтр по деградации скора за 7 дней">
+        <option value="">все</option>
+        <option value="alerts">⚠ проблемные</option>
       </select>
       <span id="countLabel" class="muted"></span>
     </div>

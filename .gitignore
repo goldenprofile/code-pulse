@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 data/
 .env
+.ruff_cache/
+.scout-*.md
+.worker*-verified.md
+.review-findings.md

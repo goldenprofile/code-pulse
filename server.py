@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import queue
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,17 +25,56 @@ CONTENT_TYPES = {
 
 
 class App:
-    def __init__(self, root: Path, store, status: scanner.Status):
+    def __init__(self, root: Path, store, status: scanner.Status,
+                 alert_drop: float = 5.0):
         self.root = root
         self.store = store
         self.status = status
+        self.alert_drop = alert_drop  # порог алерта деградации за 7 дней
         self._git_cache: dict[str, object] = {}
         self._git_cache_ts: float = 0.0
+        # SSE-подписчики: очередь на каждое открытое соединение /api/events
+        self._subs: list[queue.Queue] = []
+        self._subs_lock = threading.Lock()
 
     # ------------------------------------------------------------------ api
+    @staticmethod
+    def _delta(series: list[dict], now: float, days: int) -> float | None:
+        """Дельта скоринга «за days дней»: последний снапшот минус база.
+
+        База — первый снапшот старше (days-5) дней (шаг бэкфилла ~3 дня,
+        поэтому база ищется чуть внутри периода); при короткой истории —
+        самый первый снапшот. Нужно ≥2 снапшота и оба score не None.
+        """
+        if len(series) < 2:
+            return None
+        horizon = now - max(days - 5, 1) * 86400
+        base = next((s for s in series if s["ts"] <= horizon), series[0])
+        if base is series[-1] or base["score"] is None \
+                or series[-1]["score"] is None:
+            return None
+        return round(series[-1]["score"] - base["score"], 1)
+
+    @staticmethod
+    def _delta7(series: list[dict], now: float) -> float | None:
+        """Дельта строго за окно 7 дней: последний свежий снапшот минус первый.
+
+        Свежие = снапшоты с ts >= now - 7*86400; нужно ≥2 снапшота
+        и оба score не None, иначе None.
+        """
+        fresh = [s for s in series if s["ts"] >= now - 7 * 86400]
+        if len(fresh) >= 2 and fresh[0]["score"] is not None \
+                and fresh[-1]["score"] is not None:
+            return round(fresh[-1]["score"] - fresh[0]["score"], 1)
+        return None
+
+    def _alert(self, delta7: float | None) -> bool:
+        return delta7 is not None and delta7 <= -self.alert_drop
+
     def overview(self) -> dict:
         projects = self.store.projects()
         live_all = self.store.live_all()
+        now = time.time()
         out = []
         for p in projects:
             name = p["name"]
@@ -45,13 +86,8 @@ class App:
                 for s in snaps
             ]
             score = series[-1]["score"] if series else None
-            delta = None
-            if series and len(series) >= 2:
-                base = next((s for s in series if s["ts"] <= time.time() - 25 * 86400),
-                            series[0])
-                if base is not series[-1] and base["score"] is not None \
-                        and score is not None:
-                    delta = round(score - base["score"], 1)
+            delta = self._delta(series, now, 30)
+            delta7 = self._delta7(series, now)
             out.append({
                 "name": name,
                 "path": p["path"],
@@ -59,6 +95,8 @@ class App:
                 "stack": p["stack"],
                 "score": score,
                 "delta30": delta,
+                "delta7": delta7,
+                "alert": self._alert(delta7),
                 "series": series,
                 "live": live_all.get(name),
             })
@@ -110,12 +148,15 @@ class App:
             ({"file": p, **{k: r.get(k) for k in ("sloc", "cog", "cc", "mi", "lcom4_max")}}
              for p, r in files.items()),
             key=lambda f: f.get("cog", 0), reverse=True)[:12]
+        delta7 = self._delta7(series, time.time())
         return {
             "name": name,
             "path": projects[name]["path"],
             "stack": projects[name]["stack"],
             "live": live,
             "series": series,
+            "delta7": delta7,
+            "alert": self._alert(delta7),
             "coupling": coupling,
             "evo": evo,
             "worst_files": worst_files,
@@ -169,6 +210,36 @@ class App:
         self._git_cache.clear()
         self._git_cache_ts = 0.0
 
+    # ------------------------------------------------------------------ SSE
+    def subscribe(self) -> queue.Queue:
+        """Зарегистрировать нового подписчика /api/events."""
+        q: queue.Queue = queue.Queue(maxsize=100)
+        with self._subs_lock:
+            self._subs.append(q)
+        return q
+
+    def unsubscribe(self, q: queue.Queue) -> None:
+        with self._subs_lock:
+            if q in self._subs:
+                self._subs.remove(q)
+
+    def emit(self, event: str, data: dict) -> None:
+        """Разослать событие подписчикам.
+
+        Медленный клиент (переполненная очередь) получает дроп события,
+        но не блокирует поток скана; без подписчиков — мгновенный выход,
+        поэтому фоновый скан из run.py ничего не стоит.
+        """
+        with self._subs_lock:
+            subs = list(self._subs)
+        if not subs:
+            return
+        for q in subs:
+            try:
+                q.put_nowait((event, data))
+            except queue.Full:
+                pass
+
     # --------------------------------------------------------------- потоки
     def run_refresh(self, names: set | None = None) -> None:
         """Живое сканирование; names — только указанные проекты (вкл. из настроек).
@@ -177,6 +248,8 @@ class App:
         пропускаются, добираются только новые сэмплы (в т.ч. по нововключённому
         проекту — сразу строится история за месяц).
         """
+        self.emit("scan_started",
+                  {"status": {**self.status.snapshot(), "phase": "scan"}})
         try:
             scanner.scan_all(self.root, self.store, self.status,
                              self.store.get_excludes(), names=names)
@@ -187,8 +260,12 @@ class App:
             self.status.update(error=str(exc)[:300])
         finally:
             self.invalidate()
+            self.emit("scan_done", {"status": self.status.snapshot()})
+            self.emit("project_updated", {"names": sorted(names) if names else []})
 
     def run_backfill(self, days: int, step: int) -> None:
+        self.emit("scan_started",
+                  {"status": {**self.status.snapshot(), "phase": "backfill"}})
         try:
             scanner.backfill(self.root, self.store, self.status, days, step,
                              exclude=self.store.get_excludes())
@@ -196,6 +273,8 @@ class App:
             self.status.update(error=str(exc)[:300])
         finally:
             self.invalidate()
+            self.emit("scan_done", {"status": self.status.snapshot()})
+            self.emit("project_updated", {"names": []})
 
     # ------------------------------------------------------------- настройки
     def settings(self) -> dict:
@@ -257,6 +336,9 @@ def _brief_coupling(metrics: dict | None) -> dict:
 
 def make_handler(app: App):
     class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"  # все ответы шлют Content-Length; SSE — стрим без длины
+        timeout = 60  # keep-alive-соединение не должно держать поток вечно
+
         def log_message(self, fmt, *args):  # тише в консоль
             pass
 
@@ -280,6 +362,10 @@ def make_handler(app: App):
                     self._json(app.status.snapshot())
                 elif route == "/api/settings":
                     self._json(app.settings())
+                elif route == "/api/events":
+                    self._events()
+                elif route == "/api/report":
+                    self._report(parse_qs(parsed.query))
                 elif route.startswith("/api/"):
                     self._json({"error": "unknown"}, 404)
                 else:
@@ -313,6 +399,190 @@ def make_handler(app: App):
                 self._json({"ok": True})
             else:
                 self._json({"error": "unknown"}, 404)
+
+        # -------------------------------------------------------- отчёт .md
+        def _report(self, qs: dict) -> None:
+            """GET /api/report?name=&days= — скачиваемый markdown-отчёт по проекту."""
+            name = qs.get("name", [""])[0]
+            try:
+                days = int(qs.get("days", ["30"])[0])
+            except ValueError:
+                days = 30
+            days = max(1, min(365, days))
+            detail = app.project_detail(name)
+            if detail is None:
+                self._json({"error": "not found"}, 404)
+                return
+            # всё из БД уже вычитано в detail (копии, лок не держится);
+            # ниже — форматирование и, при days != 30, gitstats без кэша
+            series = detail.get("series") or []
+            score = series[-1]["score"] if series else None
+            subs = (series[-1].get("subs") or {}) if series else {}
+            now = time.time()
+            delta30 = App._delta(series, now, 30)
+            delta7 = detail.get("delta7")
+            live = detail.get("live") or {}
+            coupling = detail.get("coupling") or {}
+            evo = detail.get("evo") or {}
+            if days == 30:
+                hotspots = evo.get("hotspots") or []
+            else:
+                # произвольный период: пересчёт на лету; снапшоты (копии из БД)
+                # вычитаны ДО тяжёлого git-вызова
+                snaps = app.store.snapshots(name)
+                files_map = (snaps[-1].get("metrics") or {}).get("files", {}) if snaps else {}
+                path = Path(detail["path"])
+                commits = commit_log_numstat(path, days) if (path / ".git").exists() else []
+                hotspots = gitstats.hotspots(commits, files_map)
+
+            def fmt(v) -> str:
+                return "—" if v is None else f"{v:g}"
+
+            def fmt_signed(v) -> str:
+                if v is None:
+                    return "—"
+                sign = "+" if v > 0 else ("−" if v < 0 else "±")
+                return f"{sign}{abs(v):g}"
+
+            lines = [
+                f"# Code Pulse — {name}",
+                "",
+                f"- путь: `{detail['path']}`",
+                f"- стек: {detail['stack'] or '—'}",
+                f"- дата: {time.strftime('%Y-%m-%d %H:%M')}",
+                f"- период: {days} дней",
+                "",
+                "## Итог",
+                "",
+                f"- скор: {fmt(score)}",
+                f"- изменение за 30 дней: {fmt_signed(delta30)}",
+                f"- изменение за 7 дней: {fmt_signed(delta7)}"
+                + (f" (порог алерта {app.alert_drop:g})" if detail.get("alert") else ""),
+                "",
+                "## Подындексы",
+                "",
+            ]
+            for key, label in (("mi", "MI (ремонтопригодность)"),
+                               ("cog", "Когнитивная сложность"),
+                               ("dup", "Дублирование"),
+                               ("arch", "Архитектура"),
+                               ("test", "Тесты"),
+                               ("todo", "TODO")):
+                lines.append(f"- {label}: {fmt(subs.get(key))}")
+
+            lines += ["", "## Хотспоты", ""]
+            if hotspots:
+                lines += ["| файл | cog | SLOC | коммитов | churn | score |",
+                          "|---|---:|---:|---:|---:|---:|"]
+                lines += [
+                    f"| {h.get('file', '')} | {h.get('cog', 0)} | {h.get('sloc', 0)} | "
+                    f"{h.get('commits', 0)} | {h.get('churn', 0)} | {h.get('score', 0)} |"
+                    for h in hotspots[:10]
+                ]
+            else:
+                lines.append("Нет коммитов за период.")
+
+            lines += ["", "## Пакеты (Ca / Ce / I / A / D)", ""]
+            pkgs = coupling.get("packages") or []
+            if pkgs:
+                lines += ["| пакет | SLOC | Ca | Ce | I | A | D |",
+                          "|---|---:|---:|---:|---:|---:|---:|"]
+                lines += [
+                    f"| {p.get('pkg', '')} | {p.get('sloc', 0)} | {p.get('ca', 0)} | "
+                    f"{p.get('ce', 0)} | {p.get('I', 0):.2f} | {p.get('A', 0):.2f} | "
+                    f"{p.get('D', 0):.2f} |"
+                    for p in pkgs
+                ]
+                lines += ["",
+                          f"Циклов зависимостей: {coupling.get('cycles', 0)} · "
+                          f"нарушений (I>0.5 при Ca≥3): {coupling.get('violations', 0)}"]
+            else:
+                lines.append("Нет данных о пакетах.")
+
+            age = (evo.get("age") or {})
+            buckets = age.get("buckets") or {}
+            lines += ["", "## Возраст кода", ""]
+            if buckets:
+                stale = buckets.get("stale", 0)
+                lines += [
+                    f"- < 7 дней: {buckets.get('d7', 0)} SLOC",
+                    f"- < 30 дней: {buckets.get('d30', 0)} SLOC",
+                    f"- < 90 дней: {buckets.get('d90', 0)} SLOC",
+                    f"- застой (≥ 90 дней): {stale} SLOC"
+                    f" ({round((age.get('stale_share') or 0) * 100)}%)",
+                ]
+            else:
+                lines.append("Нет данных.")
+
+            lines += ["", "## Незакоммиченные файлы", ""]
+            dirty = live.get("dirty_files") or []
+            if dirty:
+                lines += [f"- `{f}`" for f in dirty]
+            elif live.get("no_git"):
+                lines.append("Git-репозитория нет — состояние файлов не отслеживается.")
+            else:
+                lines.append("Рабочее дерево чистое.")
+
+            text = "\n".join(lines) + "\n"
+            # slug защищает заголовок Content-Disposition от CRLF/кавычек/не-ASCII
+            slug = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+            data = text.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Disposition",
+                             f'attachment; filename="code-pulse-{slug}-{days}d.md"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        # ------------------------------------------------------------ SSE
+        def _events(self) -> None:
+            """SSE-поток: события от emit() + ретрансляция прогресса + keep-alive."""
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.close_connection = True
+            q = app.subscribe()
+
+            def sse(event: str, obj: dict) -> None:
+                # payload уходит в data: построчно — переводы строк не ломают фрейминг
+                payload = json.dumps(obj, ensure_ascii=False)
+                body = b"".join(b"data: " + ln.encode("utf-8") + b"\n"
+                                for ln in payload.split("\n"))
+                self.wfile.write(b"event: " + event.encode("ascii") + b"\n" + body + b"\n")
+                self.wfile.flush()
+
+            last_sent: dict | None = None   # статус, уже отражённый клиенту
+            last_activity = time.time()
+            try:
+                self.wfile.write(b"retry: 3000\n\n")  # авто-reconnect EventSource
+                self.wfile.flush()
+                while True:
+                    try:
+                        event, data = q.get(timeout=1)
+                        sse(event, data)
+                        last_activity = time.time()
+                        last_sent = app.status.snapshot()
+                    except queue.Empty:
+                        # прогресс скана ретранслируем сами, читая status.snapshot()
+                        snap = app.status.snapshot()
+                        if last_sent is None:
+                            last_sent = snap
+                        if snap != last_sent or snap["phase"] != "idle":
+                            sse("scan_progress",
+                                {"phase": snap["phase"], "done": snap["done"],
+                                 "total": snap["total"], "current": snap["current"]})
+                            last_sent = snap
+                            last_activity = time.time()
+                        elif time.time() - last_activity >= 15:
+                            self.wfile.write(b": ping\n\n")  # keep-alive + детект мёртвого сокета
+                            self.wfile.flush()
+                            last_activity = time.time()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass  # клиент отключился — finally снимет подписку
+            finally:
+                app.unsubscribe(q)
 
         # -------------------------------------------------------- helpers
         def _json(self, obj, code: int = 200) -> None:

@@ -102,6 +102,88 @@ function pollStatus(onDone) {
   }).catch(() => { pollTimer = setTimeout(() => pollStatus(onDone), 2000); });
 }
 
+/* ------------------------------------------------ живое автообновление */
+let eventSource = null;
+let fallbackTimer = null;
+
+function updateLiveIndicator(st) {
+  const dot = $("#liveDot");
+  const text = $("#liveText");
+  if (!dot || !text) return;
+  const busy = !!st && st.phase !== "idle";
+  dot.classList.toggle("busy", busy);
+  text.textContent = busy
+    ? `${st.phase === "backfill" ? "пересчёт истории" : "сканирование"} ${st.done}/${st.total}`
+    : "живое обновление";
+}
+
+async function reloadSelectedProject() {
+  if (!state.selected) return;
+  try {
+    const d = await api(`/api/project?name=${encodeURIComponent(state.selected)}`);
+    renderProject(d);
+  } catch { /* проект мог исчезнуть — тихо игнорируем */ }
+}
+
+// фолбэк, когда EventSource не поднялся: редкий поллинг статуса,
+// данные перезагружаем только на переходе busy→idle (второй поллинг не заводим)
+function startFallbackPolling() {
+  if (fallbackTimer) return;
+  let wasBusy = false;
+  fallbackTimer = setInterval(async () => {
+    try {
+      const st = await api("/api/status");
+      const busy = st.phase !== "idle";
+      updateLiveIndicator(st);
+      if (wasBusy && !busy) {
+        await loadOverview();
+        await reloadSelectedProject();
+      }
+      wasBusy = busy;
+    } catch { /* сервер недоступен — ждём следующего тика */ }
+  }, 30000);
+}
+
+function connectEvents() {
+  let es;
+  try {
+    es = new EventSource("/api/events");
+  } catch {
+    startFallbackPolling();
+    return;
+  }
+  eventSource = es;
+  const parseData = (ev) => { try { return JSON.parse(ev.data); } catch { return {}; } };
+  const onBusy = (ev) => {
+    const data = parseData(ev);
+    updateLiveIndicator(data.status || data);
+  };
+  const onProgress = (ev) => {
+    const data = parseData(ev);
+    // scan_done мог быть дропнут из переполненной очереди — дозагружаем данные
+    if (data.phase === "idle") {
+      loadOverview().catch(() => {});
+      reloadSelectedProject();
+    }
+    updateLiveIndicator(data.status || data);
+  };
+  es.addEventListener("scan_started", onBusy);
+  es.addEventListener("scan_progress", onProgress);
+  es.addEventListener("scan_done", () => {
+    updateLiveIndicator({ phase: "idle", done: 0, total: 0 });
+    loadOverview().catch(() => {});
+    reloadSelectedProject();
+  });
+  es.addEventListener("project_updated", () => { loadOverview().catch(() => {}); });
+  es.onerror = () => {
+    es.close();
+    eventSource = null;
+    const liveText = $("#liveText");
+    if (liveText) liveText.textContent = "SSE недоступен — поллинг 30с";
+    startFallbackPolling();
+  };
+}
+
 /* ----------------------------------------------------------------- обзор */
 function liveBadges(live) {
   if (!live) return "";
@@ -143,6 +225,8 @@ function cardHTML(p) {
   const delta = p.delta30;
   const deltaHTML = delta == null ? "" :
     `<span class="${delta >= 0 ? "delta-up" : "delta-down"}">${delta >= 0 ? "▲" : "▼"} ${Math.abs(delta)}</span>`;
+  const alertHTML = p.alert
+    ? ` <span class="badge alert" title="падение скора за 7 дней">▼ ${Math.abs(p.delta7)}</span>` : "";
   const sparkColor = deltaColor(delta ?? (p.score != null ? 0 : null));
   const live = p.live || {};
   const lastMsg = live.last_commit?.msg
@@ -152,7 +236,7 @@ function cardHTML(p) {
     <div class="head">
       ${ringSVG(p.score)}
       <div style="flex:1">
-        <div class="name">${esc(p.name)} ${deltaHTML}</div>
+        <div class="name">${esc(p.name)} ${deltaHTML}${alertHTML}</div>
         <div class="stack">${esc(p.stack)} · ${fmtNum(t.sloc || 0)} SLOC</div>
       </div>
     </div>
@@ -177,6 +261,7 @@ function renderCards() {
   const q = $("#search").value.trim().toLowerCase();
   const st = $("#stackFilter").value;
   const gf = $("#gitFilter").value;
+  const af = $("#alertFilter").value;
   const filtered = ov.projects.filter((p) => {
     if (q && !p.name.toLowerCase().includes(q)) return false;
     if (st === "—" && p.stack !== "—") return false;
@@ -184,6 +269,7 @@ function renderCards() {
     if (gf === "nogit" && p.is_git) return false;
     if (gf === "dirty" && !(p.live && p.live.dirty_total > 0)) return false;
     if (gf === "clean" && (!p.is_git || (p.live && p.live.dirty_total > 0))) return false;
+    if (af === "alerts" && !p.alert) return false;
     return true;
   });
   $("#countLabel").textContent = `${filtered.length} из ${ov.projects.length}`;
@@ -212,13 +298,16 @@ function iClass(i) { return i < 0.34 ? "i-low" : i < 0.67 ? "i-mid" : "i-high"; 
 
 function renderProject(d) {
   const live = d.live || {};
+  const alertBadge = d.alert
+    ? ` <span class="badge alert" title="падение скора за 7 дней">▼ ${Math.abs(d.delta7)}</span>` : "";
   $("#projectHeader").innerHTML = `
     <h2>${esc(d.name)}
-      ${liveBadges(live)}
+      ${liveBadges(live)}${alertBadge}
       <span class="path">${esc(d.path)}</span>
     </h2>
     <div class="path">${esc(d.stack || "")} · коммитов за 30д: ${d.evo?.commits_30d ?? 0}
-      · отсканировано ${relTime(live.scanned_at)}</div>`;
+      · отсканировано ${relTime(live.scanned_at)}</div>
+    <a class="btn-export" href="/api/report?name=${encodeURIComponent(d.name)}&days=30" download>Экспорт .md</a>`;
 
   renderQualityChart(d);
   renderChurnChart(d.evo?.churn_weeks || []);
@@ -678,6 +767,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#search").oninput = renderCards;
   $("#stackFilter").onchange = renderCards;
   $("#gitFilter").onchange = renderCards;
+  $("#alertFilter").onchange = renderCards;
 
   $("#btnRefresh").onclick = async () => {
     await api("/api/refresh", { method: "POST" });
@@ -704,4 +794,5 @@ document.addEventListener("DOMContentLoaded", () => {
 
   pollStatus(loadOverview);
   loadOverview().then(applyHash);
+  connectEvents();
 });
