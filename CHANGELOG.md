@@ -28,3 +28,5 @@
 - HTTP-сервер переведён с HTTP/1.0 на HTTP/1.1: keep-alive работает,
   все ответы шлют `Content-Length`, соединение ограничено таймаутом 60 с;
   SSE-поток отдаётся стримом без длины.
+
+[0.2.0]: https://github.com/goldenprofile/code-pulse/releases/tag/v0.2.0
