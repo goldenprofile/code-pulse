@@ -770,7 +770,11 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#alertFilter").onchange = renderCards;
 
   $("#btnRefresh").onclick = async () => {
-    await api("/api/refresh", { method: "POST" });
+    // Content-Type обязателен: сервер отклоняет POST без application/json (защита от CSRF)
+    await api("/api/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
     pollStatus(async () => { await loadOverview(); });
   };
   $("#btnBackfill").onclick = async () => {

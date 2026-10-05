@@ -342,8 +342,35 @@ def make_handler(app: App):
         def log_message(self, fmt, *args):  # тише в консоль
             pass
 
+        # ------------------------------------------------------- защита
+        def _host_ok(self) -> bool:
+            """Host — только loopback с нашим портом: отсекает DNS rebinding.
+
+            Чужой домен, перепривязанный на 127.0.0.1, приходит со своим Host —
+            без этой проверки его страница читала бы API (пути, ветки, файлы).
+            """
+            port = self.server.server_address[1]
+            host = (self.headers.get("Host") or "").lower()
+            return host in {f"127.0.0.1:{port}", f"localhost:{port}"}
+
+        def _post_ok(self) -> bool:
+            """POST — только JSON и только со своей страницы: защита от CSRF.
+
+            Требование application/json делает запрос «непростым» — браузер шлёт
+            preflight OPTIONS, который сервер не обслуживает, и чужая страница
+            не может отправить его вслепую. Origin, если пришёл, обязан быть нашим.
+            """
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype != "application/json":
+                return False
+            origin = self.headers.get("Origin")
+            return origin is None or origin.lower() == f"http://{self.headers.get('Host', '').lower()}"
+
         # ------------------------------------------------------------ GET
         def do_GET(self):  # noqa: N802
+            if not self._host_ok():
+                self._json({"error": "forbidden host"}, 403)
+                return
             parsed = urlparse(self.path)
             route = parsed.path
             try:
@@ -375,30 +402,40 @@ def make_handler(app: App):
 
         # ----------------------------------------------------------- POST
         def do_POST(self):  # noqa: N802
+            if not self._host_ok() or not self._post_ok():
+                self._json({"error": "forbidden"}, 403)
+                return
             route = urlparse(self.path).path
             if app.status.phase != "idle":
                 self._json({"ok": False, "reason": "занят", "status": app.status.snapshot()})
                 return
-            if route == "/api/refresh":
-                threading.Thread(target=app.run_refresh, daemon=True).start()
-                self._json({"ok": True})
-            elif route == "/api/settings/exclude":
+            try:
                 length = int(self.headers.get("Content-Length") or 0)
-                body = json.loads(self.rfile.read(length) or b"{}")
-                name = str(body.get("name", ""))
-                excluded = bool(body.get("excluded", False))
-                result = app.set_excluded(name, excluded)
-                self._json(result, 200 if result.get("ok") else 400)
-            elif route == "/api/backfill":
-                length = int(self.headers.get("Content-Length") or 0)
-                body = json.loads(self.rfile.read(length) or b"{}")
-                days = int(body.get("days", 30))
-                step = int(body.get("step_days", 3))
-                threading.Thread(target=app.run_backfill, args=(days, step),
-                                 daemon=True).start()
-                self._json({"ok": True})
-            else:
-                self._json({"error": "unknown"}, 404)
+                body = json.loads(self.rfile.read(length) or b"{}") if length else {}
+                if not isinstance(body, dict):
+                    raise TypeError("body must be a JSON object")
+                if route == "/api/refresh":
+                    threading.Thread(target=app.run_refresh, daemon=True).start()
+                    self._json({"ok": True})
+                elif route == "/api/settings/exclude":
+                    name = str(body.get("name", ""))
+                    excluded = bool(body.get("excluded", False))
+                    result = app.set_excluded(name, excluded)
+                    self._json(result, 200 if result.get("ok") else 400)
+                elif route == "/api/backfill":
+                    # границы как у /api/report: без них один запрос мог запустить
+                    # бэкфилл на сотни лет по всем репозиториям
+                    days = max(1, min(365, int(body.get("days", 30))))
+                    step = max(1, min(30, int(body.get("step_days", 3))))
+                    threading.Thread(target=app.run_backfill, args=(days, step),
+                                     daemon=True).start()
+                    self._json({"ok": True})
+                else:
+                    self._json({"error": "unknown"}, 404)
+            except (ValueError, TypeError) as exc:  # битый JSON / нечисловые days
+                self._json({"ok": False, "error": f"bad request: {exc}"}, 400)
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": str(exc)}, 500)
 
         # -------------------------------------------------------- отчёт .md
         def _report(self, qs: dict) -> None:
