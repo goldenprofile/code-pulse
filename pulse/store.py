@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 CREATE TABLE IF NOT EXISTS snapshots (
     project TEXT NOT NULL,
-    commit_id TEXT NOT NULL,          -- tree sha или 'WORKTREE'
+    commit_id TEXT NOT NULL,          -- tree sha или 'WORKTREE:YYYY-MM-DD'
     ts INTEGER NOT NULL,              -- время состояния (коммита или скана)
     score REAL,
     subscores TEXT,                   -- json
@@ -38,6 +38,14 @@ CREATE TABLE IF NOT EXISTS meta (
 """
 
 
+WORKTREE_PREFIX = "WORKTREE:"
+
+
+def worktree_id(ts: float) -> str:
+    """Ключ снапшота рабочего дерева: один на локальный день, повторный скан его обновляет."""
+    return WORKTREE_PREFIX + time.strftime("%Y-%m-%d", time.localtime(ts))
+
+
 class Store:
     def __init__(self, db_path: Path | str):
         self.db_path = str(db_path)
@@ -48,6 +56,11 @@ class Store:
         with self._lock:
             self._conn.executescript(SCHEMA)
             self._conn.execute("PRAGMA journal_mode=WAL")
+            # раньше снапшот рабочего дерева был один на проект ('WORKTREE');
+            # переводим его в дневной ключ, чтобы точка осталась в истории
+            self._conn.execute(
+                "UPDATE OR REPLACE snapshots SET commit_id = ? || date(ts, 'unixepoch', 'localtime') "
+                "WHERE commit_id = 'WORKTREE'", (WORKTREE_PREFIX,))
             self._conn.commit()
 
     # ---------------------------------------------------------------- meta
@@ -135,7 +148,7 @@ class Store:
         with self._lock:
             q = "SELECT COUNT(*) AS n FROM snapshots"
             if history_only:
-                q += " WHERE commit_id != 'WORKTREE'"
+                q += " WHERE commit_id NOT LIKE 'WORKTREE%'"
             return self._conn.execute(q).fetchone()["n"]
 
     # ---------------------------------------------------------------- live

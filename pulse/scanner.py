@@ -12,6 +12,7 @@ from typing import Dict, Optional
 from pulse.analyze import analyze_sources
 from pulse.gitutil import commit_log_trees, try_git
 from pulse.score import quality_subscores
+from pulse.store import worktree_id
 
 DEFAULT_EXCLUDE_DIRS = {
     ".git", "node_modules", ".venv", "venv", "env", ".tox", ".mypy_cache",
@@ -304,7 +305,7 @@ def scan_all(root: Path, store, status: Status, exclude: set | None = None,
         store.save_live(name, state)
         if metrics:
             subs = _subs_for(metrics)
-            store.save_snapshot(name, "WORKTREE", now, subs, metrics)
+            store.save_snapshot(name, worktree_id(now), now, subs, metrics)
             summary[name] = {"score": subs["score"], "sloc": metrics["totals"]["sloc"]}
         else:
             summary[name] = {"score": None, "sloc": 0,
