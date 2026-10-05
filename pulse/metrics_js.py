@@ -14,7 +14,9 @@ MAX_SOURCE_BYTES = 400_000
 _FUNC_RE = re.compile(
     r"function\s*\w*\s*\([^)]*\)\s*\{"          # function f() {
     r"|(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>"  # стрелочные
-    r"|(?:async\s+)?(?!if\b|for\b|while\b|switch\b|catch\b|function\b|else\b|do\b)"
+    # \b перед именем обязателен: без него lookahead обходится сдвигом на символ
+    # («if (x) {» матчился как метод «f», «while» — как «hile»)
+    r"|(?:async\s+)?\b(?!(?:if|for|while|switch|catch|function|else|do|return)\b)"
     r"(\w+)\s*\([^)]*\)\s*\{",                                             # методы классов
 )
 _SKIP_RE = re.compile(
@@ -56,7 +58,13 @@ def analyze_js_file(path: str, src: str) -> dict | None:
         # баланс скобок: срезаем тело функции
         depth = 0
         started = False
-        body_start = clean.find("{", m.start())
+        if m.group(0).endswith("=>"):
+            # стрелочная: тело в скобках только если «{» сразу после «=>»,
+            # иначе find() утащил бы тело следующей функции
+            rest = clean[m.end():].lstrip()
+            body_start = len(clean) - len(rest) if rest.startswith("{") else -1
+        else:
+            body_start = clean.find("{", m.start())
         if body_start == -1:
             continue
         i = body_start
