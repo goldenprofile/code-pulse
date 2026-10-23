@@ -46,6 +46,12 @@ def load_config() -> dict:
 
 
 def main() -> None:
+    # stdout/stderr всегда пишут UTF-8: при пайпе/редиректе Windows подставляет
+    # cp1251, и ✦/✗/кириллица в print дают UnicodeEncodeError до старта сервера
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
     ap = argparse.ArgumentParser(description="Code Pulse dashboard")
     ap.add_argument("--rescan", action="store_true", help="только скан, без сервера")
     ap.add_argument("--backfill-only", action="store_true",
@@ -60,7 +66,7 @@ def main() -> None:
     days = args.days or cfg["days"]
     root = Path(cfg["root"])
     if not root.exists():
-        print(f"✗ Корневой каталог не найден: {root}")
+        print(f"✗ Корневой каталог не найден: {root}", flush=True)
         sys.exit(1)
 
     store = Store(ROOT_DIR / "data" / "code-pulse.db")
@@ -81,10 +87,11 @@ def main() -> None:
                   end="", flush=True)
             threading.Event().wait(0.5)
         s = status.snapshot()
-        print(f"\r  готово: {s['done']}/{max(s['total'], 1)}" + " " * 30)
+        print(f"\r  готово: {s['done']}/{max(s['total'], 1)}" + " " * 30,
+              flush=True)
 
     if not store.projects():
-        print(f"✦ Скан проектов в {root} …")
+        print(f"✦ Скан проектов в {root} …", flush=True)
         scan_thread = threading.Thread(target=app.run_refresh, daemon=True)
         scan_thread.start()
         console_status()
@@ -93,30 +100,32 @@ def main() -> None:
         scan_thread.join()
 
     if not args.no_backfill and store.snapshot_count(history_only=True) == 0:
-        print(f"✦ Бэкфилл истории за {days} дней (шаг {cfg['step_days']} дн.) …")
+        print(f"✦ Бэкфилл истории за {days} дней (шаг {cfg['step_days']} дн.) …",
+              flush=True)
         threading.Thread(target=app.run_backfill, args=(days, cfg["step_days"]),
                          daemon=True).start()
         console_status()
 
     if args.rescan:
-        print("✦ Живое сканирование …")
+        print("✦ Живое сканирование …", flush=True)
         app.run_refresh()
         for info in sorted(app.overview()["projects"], key=lambda x: x["score"] or 0):
             live = info.get("live") or {}
             dirty = live.get("dirty_total", 0)
             flag = f" ⚠{dirty}" if dirty else ""
-            print(f"  {info['name']:<28} score={info['score']!s:>5}{flag}")
+            print(f"  {info['name']:<28} score={info['score']!s:>5}{flag}",
+                  flush=True)
         return
     if args.backfill_only:
         app.run_backfill(days, cfg["step_days"])
-        print("✦ Бэкфилл завершён.")
+        print("✦ Бэкфилл завершён.", flush=True)
         return
 
     port = args.port or cfg["port"]
     # фоновое живое сканирование при каждом старте — так пишется ежедневный снапшот
     threading.Thread(target=app.run_refresh, daemon=True).start()
     url = f"http://127.0.0.1:{port}"
-    print(f"✦ Code Pulse → {url}  (Ctrl+C — выход)")
+    print(f"✦ Code Pulse → {url}  (Ctrl+C — выход)", flush=True)
     if cfg.get("auto_open", True):
         threading.Timer(0.8, webbrowser.open, args=(url,)).start()
     serve(app, port=port)
