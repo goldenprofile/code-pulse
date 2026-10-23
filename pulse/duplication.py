@@ -37,12 +37,16 @@ def duplication_ratio(files: Dict[str, str]) -> float:
 
     dup = 0
     total = 0
+    seen: set = set()
     for lines in normalized.values():
         total += len(lines)
         flags = [False] * len(lines)
         for i in range(len(lines) - WINDOW + 1):
-            if counts[hash("\n".join(lines[i:i + WINDOW]))] >= 2:
+            h = hash("\n".join(lines[i:i + WINDOW]))
+            # первое вхождение окна — оригинал; дубликатом считаются повторные
+            if counts[h] >= 2 and h in seen:
                 for j in range(i, i + WINDOW):
                     flags[j] = True
+            seen.add(h)
         dup += sum(flags)
     return round(dup / total, 4) if total else 0.0
