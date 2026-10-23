@@ -3,6 +3,31 @@
 Все заметные изменения проекта документируются в этом файле.
 Формат — [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- **Упаковка.** Проект объявлен pip/uv-совместимым: `[build-system]` на
+  setuptools и явное перечисление пакета `pulse` и корневых модулей в
+  `[tool.setuptools]` — работает editable-установка (`uv sync`, `pip install -e`).
+- **CI.** GitHub Actions workflow: lint (`ruff check .`), typecheck (`mypy .`)
+  и тесты (`pytest -q`) через uv, матрица ubuntu + windows.
+- **Dev-группа.** Инструменты разработки (ruff, mypy, pytest) вынесены в
+  PEP 735 `[dependency-groups]`.
+
+### Fixed
+
+- **Вывод при пайпе/редиректе.** `run.py` принудительно переключает stdout/stderr
+  на UTF-8 и флашит прогресс-принты — прогресс виден в реальном времени,
+  кириллица не ломается при не-консольном выводе.
+
+### Changed
+
+- **Типизация.** Закрыт mypy-долг в `pulse/` и `server.py`: TypedDict-описания
+  структур (`_PkgMetrics`, `_RepoEdge`, `_SettingsItem`), аннотации вместо
+  вывода типов, три обоснованных `cast`; убраны неиспользуемые импорты в
+  тестах. mypy теперь исключает runtime-каталог `data/`.
+
 ## [0.2.1] — 2026-10-23
 
 ### Fixed
