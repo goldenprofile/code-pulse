@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import subprocess
 import tarfile
+import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -239,11 +240,29 @@ class Status:
         self.current = ""
         self.started = 0.0
         self.error = ""
-        self._lock = __import__("threading").Lock()
+        self._lock = threading.Lock()
 
     def update(self, **kw) -> None:
         with self._lock:
             self.__dict__.update(kw)
+
+    def try_begin(self, phase: str) -> bool:
+        """Атомарно занять фазу (compare-and-set): False — операция уже идёт.
+
+        Занимать фазу должен триггер (до старта фонового потока), иначе два
+        одновременных запуска оба успеют увидеть idle и начнут параллельный скан.
+        """
+        with self._lock:
+            if self.phase != "idle":
+                return False
+            self.phase = phase
+            return True
+
+    def end(self) -> None:
+        """Освободить фазу по завершении фоновой операции."""
+        with self._lock:
+            self.phase = "idle"
+            self.current = ""
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -266,8 +285,10 @@ def scan_all(root: Path, store, status: Status, exclude: set | None = None,
 
     names — если задано, сканируются только эти проекты (без очистки БД);
     cleanup — убрать из БД исключённые и исчезнувшие каталоги.
+    Фазу занимает/освобождает обёртка (App.run_refresh) через try_begin/end —
+    здесь только прогресс, иначе CAS-инвариант фазы нарушается.
     """
-    status.update(phase="scan", done=0, error="", started=time.time())
+    status.update(done=0, error="", started=time.time())
     projects = discover_projects(root, exclude)
     if names:
         projects = [p for p in projects if p.name in names]
@@ -317,7 +338,7 @@ def scan_all(root: Path, store, status: Status, exclude: set | None = None,
         for row in store.projects():
             if row["name"] not in keep or not Path(row["path"]).exists():
                 store.remove_project(row["name"])
-    status.update(phase="idle", current="", done=len(tasks), total=len(tasks))
+    status.update(current="", done=len(tasks), total=len(tasks))
     return summary
 
 
@@ -326,8 +347,10 @@ def backfill(root: Path, store, status: Status, days: int = 30, step_days: int =
     """Бэкфилл истории: метрики по сэмплам git-деревьев за `days` дней.
 
     Возвращает число новых снапшотов.
+    Фазу занимает/освобождает обёртка (App.run_backfill) через try_begin/end —
+    здесь только прогресс, иначе CAS-инвариант фазы нарушается.
     """
-    status.update(phase="backfill", done=0, error="", started=time.time())
+    status.update(done=0, error="", started=time.time())
     tasks: list[tuple] = []
     now = int(time.time())
     targets = [now - days * 86400 + k * step_days * 86400
@@ -366,5 +389,5 @@ def backfill(root: Path, store, status: Status, days: int = 30, step_days: int =
                     status.update(error=str(exc)[:300])
                 done += 1
                 status.update(done=done, current=proj_name)
-    status.update(phase="idle", current="")
+    status.update(current="")
     return done
