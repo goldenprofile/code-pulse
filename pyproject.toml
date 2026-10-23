@@ -1,3 +1,11 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["pulse"]
+py-modules = ["run", "server", "report", "events", "staticfiles"]
+
 [project]
 name = "code-pulse"
 version = "0.2.1"
@@ -8,3 +16,11 @@ dependencies = []
 [tool.ruff]
 line-length = 110
 target-version = "py311"
+
+[tool.mypy]
+# data/ — каталог runtime-артефактов (в .gitignore): админские скрипты,
+# не входящие в пакет и не попадающие в CI
+exclude = ["^data/"]
+
+[dependency-groups]
+dev = ["ruff", "mypy", "pytest"]
