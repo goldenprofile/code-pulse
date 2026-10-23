@@ -3,6 +3,8 @@ __pycache__/
 data/
 .env
 .ruff_cache/
+.mypy_cache/
+.pytest_cache/
 .scout-*.md
 .worker*-verified.md
 .review-findings.md
