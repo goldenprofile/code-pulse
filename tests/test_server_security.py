@@ -1,5 +1,6 @@
 import http.client
 import json
+import shutil
 import tempfile
 import threading
 import unittest
@@ -9,6 +10,7 @@ from pathlib import Path
 from pulse import scanner
 from pulse.store import Store
 from server import App, make_handler
+from staticfiles import WEB_DIR
 
 
 class ServerSecurityTest(unittest.TestCase):
@@ -21,6 +23,8 @@ class ServerSecurityTest(unittest.TestCase):
         cls.store = Store(tmp / "t.db")
         cls.app = App(cls.root, cls.store, scanner.Status())
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(cls.app))
+        # обрыв соединения клиентом (WinError 10053) — шум в stderr, не ошибка теста
+        cls.server.handle_error = lambda request, client_address: None
         cls.port = cls.server.server_address[1]
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
 
@@ -32,7 +36,7 @@ class ServerSecurityTest(unittest.TestCase):
         cls._tmp.cleanup()
 
     def request(self, method, path, body=None, headers=None):
-        hdrs = {"Host": f"127.0.0.1:{self.port}"}
+        hdrs = {"Host": f"127.0.0.1:{self.port}", "Connection": "close"}
         hdrs.update(headers or {})
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         try:
@@ -88,6 +92,20 @@ class ServerSecurityTest(unittest.TestCase):
         status, _ = self.request("POST", "/api/backfill", "{not json",
                                  {"Content-Type": "application/json"})
         self.assertEqual(status, 400)
+
+    # ------------------------------------------------------------- статика
+    def test_static_sibling_dir_is_403(self):
+        # «webfoo» — сосед «web»: guard на str.startswith(str(web)) его пропускал,
+        # и GET /../webfoo/... отдавал файл (is_relative_to требует разделитель)
+        sibling = WEB_DIR.parent / "webfoo"
+        (sibling / "sub").mkdir(parents=True, exist_ok=True)
+        (sibling / "sub" / "secret.txt").write_text("leak", encoding="utf-8")
+        try:
+            status, body = self.request("GET", "/../webfoo/sub/secret.txt")
+        finally:
+            shutil.rmtree(sibling, ignore_errors=True)
+        self.assertEqual(status, 403)
+        self.assertNotIn(b"leak", body)
 
     def test_non_numeric_days_is_400(self):
         status, _ = self.post_json("/api/backfill", {"days": "много"})

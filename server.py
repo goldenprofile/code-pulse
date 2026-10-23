@@ -3,25 +3,17 @@ from __future__ import annotations
 
 import json
 import queue
-import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from events import stream_events
 from pulse import gitstats, scanner
 from pulse.gitutil import commit_log_numstat
-
-WEB_DIR = Path(__file__).resolve().parent / "web"
-CONTENT_TYPES = {
-    ".html": "text/html; charset=utf-8",
-    ".js": "application/javascript; charset=utf-8",
-    ".css": "text/css; charset=utf-8",
-    ".svg": "image/svg+xml",
-    ".png": "image/png",
-    ".ico": "image/x-icon",
-}
+from report import send_report
+from staticfiles import serve_static
 
 
 class App:
@@ -440,186 +432,12 @@ def make_handler(app: App):
         # -------------------------------------------------------- отчёт .md
         def _report(self, qs: dict) -> None:
             """GET /api/report?name=&days= — скачиваемый markdown-отчёт по проекту."""
-            name = qs.get("name", [""])[0]
-            try:
-                days = int(qs.get("days", ["30"])[0])
-            except ValueError:
-                days = 30
-            days = max(1, min(365, days))
-            detail = app.project_detail(name)
-            if detail is None:
-                self._json({"error": "not found"}, 404)
-                return
-            # всё из БД уже вычитано в detail (копии, лок не держится);
-            # ниже — форматирование и, при days != 30, gitstats без кэша
-            series = detail.get("series") or []
-            score = series[-1]["score"] if series else None
-            subs = (series[-1].get("subs") or {}) if series else {}
-            now = time.time()
-            delta30 = App._delta(series, now, 30)
-            delta7 = detail.get("delta7")
-            live = detail.get("live") or {}
-            coupling = detail.get("coupling") or {}
-            evo = detail.get("evo") or {}
-            if days == 30:
-                hotspots = evo.get("hotspots") or []
-            else:
-                # произвольный период: пересчёт на лету; снапшоты (копии из БД)
-                # вычитаны ДО тяжёлого git-вызова
-                snaps = app.store.snapshots(name)
-                files_map = (snaps[-1].get("metrics") or {}).get("files", {}) if snaps else {}
-                path = Path(detail["path"])
-                commits = commit_log_numstat(path, days) if (path / ".git").exists() else []
-                hotspots = gitstats.hotspots(commits, files_map)
-
-            def fmt(v) -> str:
-                return "—" if v is None else f"{v:g}"
-
-            def fmt_signed(v) -> str:
-                if v is None:
-                    return "—"
-                sign = "+" if v > 0 else ("−" if v < 0 else "±")
-                return f"{sign}{abs(v):g}"
-
-            lines = [
-                f"# Code Pulse — {name}",
-                "",
-                f"- путь: `{detail['path']}`",
-                f"- стек: {detail['stack'] or '—'}",
-                f"- дата: {time.strftime('%Y-%m-%d %H:%M')}",
-                f"- период: {days} дней",
-                "",
-                "## Итог",
-                "",
-                f"- скор: {fmt(score)}",
-                f"- изменение за 30 дней: {fmt_signed(delta30)}",
-                f"- изменение за 7 дней: {fmt_signed(delta7)}"
-                + (f" (порог алерта {app.alert_drop:g})" if detail.get("alert") else ""),
-                "",
-                "## Подындексы",
-                "",
-            ]
-            for key, label in (("mi", "MI (ремонтопригодность)"),
-                               ("cog", "Когнитивная сложность"),
-                               ("dup", "Дублирование"),
-                               ("arch", "Архитектура"),
-                               ("test", "Тесты"),
-                               ("todo", "TODO")):
-                lines.append(f"- {label}: {fmt(subs.get(key))}")
-
-            lines += ["", "## Хотспоты", ""]
-            if hotspots:
-                lines += ["| файл | cog | SLOC | коммитов | churn | score |",
-                          "|---|---:|---:|---:|---:|---:|"]
-                lines += [
-                    f"| {h.get('file', '')} | {h.get('cog', 0)} | {h.get('sloc', 0)} | "
-                    f"{h.get('commits', 0)} | {h.get('churn', 0)} | {h.get('score', 0)} |"
-                    for h in hotspots[:10]
-                ]
-            else:
-                lines.append("Нет коммитов за период.")
-
-            lines += ["", "## Пакеты (Ca / Ce / I / A / D)", ""]
-            pkgs = coupling.get("packages") or []
-            if pkgs:
-                lines += ["| пакет | SLOC | Ca | Ce | I | A | D |",
-                          "|---|---:|---:|---:|---:|---:|---:|"]
-                lines += [
-                    f"| {p.get('pkg', '')} | {p.get('sloc', 0)} | {p.get('ca', 0)} | "
-                    f"{p.get('ce', 0)} | {p.get('I', 0):.2f} | {p.get('A', 0):.2f} | "
-                    f"{p.get('D', 0):.2f} |"
-                    for p in pkgs
-                ]
-                lines += ["",
-                          f"Циклов зависимостей: {coupling.get('cycles', 0)} · "
-                          f"нарушений (I>0.5 при Ca≥3): {coupling.get('violations', 0)}"]
-            else:
-                lines.append("Нет данных о пакетах.")
-
-            age = (evo.get("age") or {})
-            buckets = age.get("buckets") or {}
-            lines += ["", "## Возраст кода", ""]
-            if buckets:
-                stale = buckets.get("stale", 0)
-                lines += [
-                    f"- < 7 дней: {buckets.get('d7', 0)} SLOC",
-                    f"- < 30 дней: {buckets.get('d30', 0)} SLOC",
-                    f"- < 90 дней: {buckets.get('d90', 0)} SLOC",
-                    f"- застой (≥ 90 дней): {stale} SLOC"
-                    f" ({round((age.get('stale_share') or 0) * 100)}%)",
-                ]
-            else:
-                lines.append("Нет данных.")
-
-            lines += ["", "## Незакоммиченные файлы", ""]
-            dirty = live.get("dirty_files") or []
-            if dirty:
-                lines += [f"- `{f}`" for f in dirty]
-            elif live.get("no_git"):
-                lines.append("Git-репозитория нет — состояние файлов не отслеживается.")
-            else:
-                lines.append("Рабочее дерево чистое.")
-
-            text = "\n".join(lines) + "\n"
-            # slug защищает заголовок Content-Disposition от CRLF/кавычек/не-ASCII
-            slug = re.sub(r"[^A-Za-z0-9._-]", "_", name)
-            data = text.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/markdown; charset=utf-8")
-            self.send_header("Content-Disposition",
-                             f'attachment; filename="code-pulse-{slug}-{days}d.md"')
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            send_report(self, app, qs)
 
         # ------------------------------------------------------------ SSE
         def _events(self) -> None:
             """SSE-поток: события от emit() + ретрансляция прогресса + keep-alive."""
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.close_connection = True
-            q = app.subscribe()
-
-            def sse(event: str, obj: dict) -> None:
-                # payload уходит в data: построчно — переводы строк не ломают фрейминг
-                payload = json.dumps(obj, ensure_ascii=False)
-                body = b"".join(b"data: " + ln.encode("utf-8") + b"\n"
-                                for ln in payload.split("\n"))
-                self.wfile.write(b"event: " + event.encode("ascii") + b"\n" + body + b"\n")
-                self.wfile.flush()
-
-            last_sent: dict | None = None   # статус, уже отражённый клиенту
-            last_activity = time.time()
-            try:
-                self.wfile.write(b"retry: 3000\n\n")  # авто-reconnect EventSource
-                self.wfile.flush()
-                while True:
-                    try:
-                        event, data = q.get(timeout=1)
-                        sse(event, data)
-                        last_activity = time.time()
-                        last_sent = app.status.snapshot()
-                    except queue.Empty:
-                        # прогресс скана ретранслируем сами, читая status.snapshot()
-                        snap = app.status.snapshot()
-                        if last_sent is None:
-                            last_sent = snap
-                        if snap != last_sent or snap["phase"] != "idle":
-                            sse("scan_progress",
-                                {"phase": snap["phase"], "done": snap["done"],
-                                 "total": snap["total"], "current": snap["current"]})
-                            last_sent = snap
-                            last_activity = time.time()
-                        elif time.time() - last_activity >= 15:
-                            self.wfile.write(b": ping\n\n")  # keep-alive + детект мёртвого сокета
-                            self.wfile.flush()
-                            last_activity = time.time()
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                pass  # клиент отключился — finally снимет подписку
-            finally:
-                app.unsubscribe(q)
+            stream_events(self, app)
 
         # -------------------------------------------------------- helpers
         def _json(self, obj, code: int = 200) -> None:
@@ -632,25 +450,8 @@ def make_handler(app: App):
             self.wfile.write(data)
 
         def _static(self, route: str) -> None:
-            if route in ("/", "/index.html"):
-                path = WEB_DIR / "index.html"
-            else:
-                rel = route.lstrip("/")
-                path = (WEB_DIR / rel).resolve()
-                if not str(path).startswith(str(WEB_DIR.resolve())):
-                    self._json({"error": "forbidden"}, 403)
-                    return
-            if not path.exists():
-                self._json({"error": "not found"}, 404)
-                return
-            data = path.read_bytes()
-            self.send_response(200)
-            self.send_header("Content-Type",
-                             CONTENT_TYPES.get(path.suffix, "application/octet-stream"))
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            self.wfile.write(data)
+            """Статика из web/: mime-типы и path-traversal guard — в staticfiles.py."""
+            serve_static(self, route)
 
     return Handler
 
