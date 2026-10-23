@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+*.egg-info/
 data/
 .env
 .ruff_cache/

@@ -24,7 +24,8 @@ jobs:
           python-version: "3.13"
 
       - name: Install project and dev group
-        run: uv sync --python 3.13
+        # --frozen: строго по uv.lock — версии инструментов в CI и локально совпадают
+        run: uv sync --frozen --python 3.13
 
       - name: lint
         run: uv run ruff check .
