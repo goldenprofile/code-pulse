@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # В коде нет Windows-специфики (нет захардкоженных путей, winreg,
+        # powershell, .exe) — проверяем на обеих платформах.
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv + Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install project and dev group
+        run: uv sync --python 3.13
+
+      - name: lint
+        run: uv run ruff check .
+
+      - name: typecheck
+        run: uv run mypy .
+
+      - name: test
+        run: uv run pytest -q
