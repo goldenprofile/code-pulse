@@ -43,6 +43,10 @@ def _resolve_py(file_pkg_parts: List[str], level: int, module: str,
         if not module:
             return None
         base = module.split(".")
+    # имя из SRC_ROOTS, совпадающее с реальным внутренним пакетом (внутри него
+    # есть known-модули), — не src-layout-корень: не срезаем его при резолве
+    if base and base[0] in SRC_ROOTS and base[0] in known:
+        return base[0]
     pkg = pkg_of_dir(base)
     return pkg if pkg in known else None
 
