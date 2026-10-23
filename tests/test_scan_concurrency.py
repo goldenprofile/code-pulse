@@ -42,3 +42,29 @@ class TryBeginTest(unittest.TestCase):
         self.assertEqual(results.count(True), 1)
         self.assertEqual(results.count(False), n - 1)
 
+class WorktreeFileSetTest(unittest.TestCase):
+    def test_git_repo_respects_gitignore(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            subprocess.run(["git", "init", "-q"], cwd=d, check=True,
+                           capture_output=True)
+            (root / ".gitignore").write_text("ignored.py\n", encoding="utf-8")
+            (root / "app.py").write_text("x = 1\n", encoding="utf-8")
+            (root / "ignored.py").write_text("y = 2\n", encoding="utf-8")
+            files = scanner.collect_worktree_files(root)
+            self.assertIn("app.py", files)
+            self.assertNotIn("ignored.py", files)
+
+    def test_no_git_falls_back_to_walk(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "app.py").write_text("x = 1\n", encoding="utf-8")
+            (root / "node_modules").mkdir()
+            (root / "node_modules" / "dep.py").write_text("z = 3\n", encoding="utf-8")
+            files = scanner.collect_worktree_files(root)
+            self.assertIn("app.py", files)
+            self.assertNotIn("node_modules/dep.py", files)
+
+
+if __name__ == "__main__":
+    unittest.main()

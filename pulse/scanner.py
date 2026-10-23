@@ -46,7 +46,58 @@ def discover_projects(root: Path, exclude_names: set[str] | None = None) -> list
     return projects
 
 
-def collect_worktree_files(root: Path) -> Dict[str, str]:
+def git_worktree_paths(root: Path) -> Optional[list[str]]:
+    """Список файлов ворктри по мнению git: индекс + неотслеженные, минус
+    .gitignore — тот же набор, который `git archive` возьмёт из истории.
+
+    None — корень не git-репозиторий либо git недоступен/ошибся.
+    """
+    if not (root / ".git").exists():
+        return None
+    try:
+        # -z: пути без экранирования не-ASCII; один вызов git на проект
+        proc = subprocess.run(
+            ["git", "ls-files", "-co", "--exclude-standard", "-z"],
+            cwd=str(root), capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return [p for p in proc.stdout.decode("utf-8", errors="replace").split("\0") if p]
+
+
+def _accept_source(rel_path: str) -> bool:
+    """Фильтр относительного пути: исходник вне служебных каталогов,
+    не минифицированный бандл (те же правила, что у archive и обхода диска)."""
+    parts = rel_path.replace("\\", "/").split("/")
+    name = parts[-1]
+    if any(p in DEFAULT_EXCLUDE_DIRS or p.startswith(".") for p in parts[:-1]):
+        return False
+    ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+    return ext in SOURCE_EXTS and ".min." not in name
+
+
+def _read_git_paths(root: Path, paths: list[str]) -> Dict[str, str]:
+    """Прочитать файлы по списку путей git, применяя лимиты размера и качества."""
+    files: Dict[str, str] = {}
+    for rel in paths:
+        if len(files) >= MAX_FILES or not _accept_source(rel):
+            continue
+        path = root / rel
+        try:
+            if path.stat().st_size > MAX_FILE_BYTES:
+                continue
+            src = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if looks_generated(src):
+            continue
+        files[rel.replace("\\", "/")] = src
+    return files
+
+
+def _walk_worktree(root: Path) -> Dict[str, str]:
+    """Fallback для проектов без git: обход диска с исключениями."""
     files: Dict[str, str] = {}
     count = 0
 
@@ -81,6 +132,15 @@ def collect_worktree_files(root: Path) -> Dict[str, str]:
 
     walk(root, "")
     return files
+
+
+def collect_worktree_files(root: Path) -> Dict[str, str]:
+    """Живое состояние проекта: для git-репозиториев берём набор файлов от git
+    (совпадает с набором истории — без ложных дельт), иначе обход диска."""
+    paths = git_worktree_paths(root)
+    if paths is not None:
+        return _read_git_paths(root, paths)
+    return _walk_worktree(root)
 
 
 def stack_of(root: Path) -> str:
