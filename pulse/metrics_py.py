@@ -14,11 +14,15 @@
 from __future__ import annotations
 
 import ast
+import io
 import math
+import re
+import tokenize
 from collections import Counter
 from typing import Dict, List, Tuple
 
 MAX_SOURCE_BYTES = 400_000
+LONG_FUNC_COG = 20  # cognitive-сложность, с которой функция считается «длинной»
 
 _NESTABLE = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.ExceptHandler)
 _FUNC_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -104,64 +108,66 @@ def _function_complexity(fn: ast.AST) -> Tuple[int, int, int]:
     cc = 1
     deepest = 0
 
-    def rec(node: ast.AST, depth: int) -> None:
+    # Ветвление считается в момент входа в него (uniformly на любой глубине:
+    # statement тела/orelse родителя — тоже узел обхода), flat — плоский +1 для elif.
+    def rec(node: ast.AST, depth: int, flat: bool = False) -> None:
         nonlocal cog, cc, deepest
-        for child in ast.iter_child_nodes(node):
-            t = type(child)
-            if t in _FUNC_NODES:
-                continue
-            if t is ast.If:
-                is_elif = (isinstance(node, ast.If) and bool(node.orelse)
-                           and child is node.orelse[0])
-                cog += 1 if is_elif else 1 + depth
-                cc += 1
-                if not is_elif:
-                    deepest = max(deepest, depth + 1)
-                rec(child.test, depth)
-                for b in child.body:
-                    rec(b, depth + 1)
-                for b in child.orelse:
-                    rec(b, depth + 1)
-            elif t in (ast.For, ast.AsyncFor, ast.While):
-                cog += 1 + depth
-                cc += 1
+        t = type(node)
+        if t in _FUNC_NODES and node is not fn:
+            return  # вложенная функция анализируется отдельно
+        if t is ast.If:
+            cog += 1 if flat else 1 + depth
+            cc += 1
+            if not flat:
                 deepest = max(deepest, depth + 1)
-                for b in child.body:
-                    rec(b, depth + 1)
-                for b in child.orelse:
-                    rec(b, depth + 1)
-            elif t is ast.ExceptHandler:
-                cog += 1 + depth
-                cc += 1
-                for b in child.body:
-                    rec(b, depth + 1)
-            elif t is ast.BoolOp:
-                extra = len(child.values) - 1
-                cog += extra
-                cc += extra
-                for v in child.values:
-                    rec(v, depth)
-            elif t is ast.IfExp:
-                cog += 1 + depth
-                cc += 1
-                for c in ast.iter_child_nodes(child):
-                    rec(c, depth)
-            elif t is ast.comprehension:
-                n_if = len(child.ifs)
-                cog += 1 + n_if
-                cc += 1 + n_if
-                for c in ast.iter_child_nodes(child):
-                    rec(c, depth)
-            elif t is ast.Assert:
-                cog += 1
-                cc += 1
-                rec(child.test, depth)
-            elif t is ast.match_case:
-                cog += 1
-                cc += 1
-                for b in child.body:
-                    rec(b, depth + 1)
-            else:
+            rec(node.test, depth)
+            for b in node.body:
+                rec(b, depth + 1)
+            for b in node.orelse:
+                # первый statement orelse — elif: плоский +1 без надбавки
+                rec(b, depth + 1, flat=(b is node.orelse[0]))
+        elif t in (ast.For, ast.AsyncFor, ast.While):
+            cog += 1 + depth
+            cc += 1
+            deepest = max(deepest, depth + 1)
+            for b in node.body:
+                rec(b, depth + 1)
+            for b in node.orelse:
+                rec(b, depth + 1)
+        elif t is ast.ExceptHandler:
+            cog += 1 + depth
+            cc += 1
+            deepest = max(deepest, depth + 1)
+            for b in node.body:
+                rec(b, depth + 1)
+        elif t is ast.BoolOp:
+            extra = len(node.values) - 1
+            cog += extra
+            cc += extra
+            for v in node.values:
+                rec(v, depth)
+        elif t is ast.IfExp:
+            cog += 1 + depth
+            cc += 1
+            for c in ast.iter_child_nodes(node):
+                rec(c, depth)
+        elif t is ast.comprehension:
+            n_if = len(node.ifs)
+            cog += 1 + n_if
+            cc += 1 + n_if
+            for c in ast.iter_child_nodes(node):
+                rec(c, depth)
+        elif t is ast.Assert:
+            cog += 1
+            cc += 1
+            rec(node.test, depth)
+        elif t is ast.match_case:
+            cog += 1
+            cc += 1
+            for b in node.body:
+                rec(b, depth + 1)
+        else:
+            for child in ast.iter_child_nodes(node):
                 rec(child, depth)
 
     rec(fn, 0)
@@ -254,6 +260,25 @@ def file_imports(tree: ast.AST) -> List[Tuple[int, str]]:
 
 
 # --------------------------------------------------------------- файл целиком
+_TODO_RE = re.compile(r"\b(?:todo|fixme)\b", re.IGNORECASE)
+
+
+def _count_todos(src: str) -> int:
+    """Число #-комментариев, содержащих TODO/FIXME (вся строка или инлайн).
+
+    Считаются только комментарии: вхождение в коде (todo_list) или в строковом
+    литерале ("TODO: fix") не должно засчитываться — иначе проект штрафует сам себя.
+    """
+    n = 0
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+            if tok.type == tokenize.COMMENT and _TODO_RE.search(tok.string):
+                n += 1
+    except (tokenize.TokenError, IndentationError):
+        pass  # сюда не доходит: источник уже прошёл ast.parse выше
+    return n
+
+
 def analyze_python_file(path: str, src: str) -> dict | None:
     """Полный отчёт по одному .py файлу (или None, если не распарсился)."""
     if len(src.encode("utf-8", "ignore")) > MAX_SOURCE_BYTES:
@@ -266,16 +291,17 @@ def analyze_python_file(path: str, src: str) -> dict | None:
     lines = src.splitlines()
     loc = len(lines)
     sloc = sum(1 for ln in lines if ln.strip())
-    todos = sum(1 for ln in lines
-                if "TODO" in ln.upper() or "FIXME" in ln.upper())
+    todos = _count_todos(src)
 
     mod_cog, mod_cc, _ = _function_complexity(tree)
     functions = [n for n in ast.walk(tree) if isinstance(n, _FUNC_NODES)]
-    f_cog = f_cc = 0
+    f_cog = f_cc = long_funcs = 0
     for f in functions:
         c, k, _d = _function_complexity(f)
         f_cog += c
         f_cc += k
+        if c >= LONG_FUNC_COG:
+            long_funcs += 1
     cog, cc = mod_cog + f_cog, 1 + f_cc + max(0, mod_cc - 1)
 
     classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
@@ -308,6 +334,7 @@ def analyze_python_file(path: str, src: str) -> dict | None:
         "cc": cc,
         "mi": round(mi, 2),
         "funcs": len(functions),
+        "long_funcs": long_funcs,
         "classes": len(classes),
         "abstract": abstract,
         "lcom4_max": lcom4_max,
@@ -350,7 +377,7 @@ def _totals_from_reports(reports: Dict[str, dict]) -> dict:
         "abstract": sum(r["abstract"] for r in reports.values()),
         "lcom4_bad": sum(r["lcom4_bad"] for r in reports.values()),
         "lcom4_max": max((r["lcom4_max"] for r in reports.values()), default=0),
-        "long_funcs": sum(1 for r in reports.values() if r["cog"] >= 20),
+        "long_funcs": sum(r["long_funcs"] for r in reports.values()),
         "god_files": sum(1 for r in reports.values() if r["sloc"] >= 400),
         "todos": sum(r["todos"] for r in reports.values()),
         "test_sloc": test_sloc,

@@ -8,6 +8,8 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Tuple
 
+from pulse.metrics_py import LONG_FUNC_COG
+
 JS_EXTS = {".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"}
 MAX_SOURCE_BYTES = 400_000
 
@@ -20,11 +22,10 @@ _FUNC_RE = re.compile(
     r"(\w+)\s*\([^)]*\)\s*\{",                                             # методы классов
 )
 _SKIP_RE = re.compile(
-    r"//[^\n]*"                       # line comment
-    r"|/\*.*?\*/"                     # block comment
-    r"|'(?:\\.|[^'\\])*'"             # string
+    r"(?P<com>//[^\n]*|/\*.*?\*/)"    # комментарии: строчные и блочные
+    r"|(?P<str>'(?:\\.|[^'\\])*'"     # string
     r"|\"(?:\\.|[^\"\\])*\""          # string
-    r"|`(?:\\.|[^`\\])*`",            # template string
+    r"|`(?:\\.|[^`\\])*`)",           # template string
     re.S,
 )
 _COMPLEXITY_RE = re.compile(r"\b(if|for|while|case|catch)\b|&&|\|\||\?\s")
@@ -34,10 +35,21 @@ _IMPORT_RE = re.compile(
     r"|require\s*\(\s*['\"]([^'\"]+)['\"]\s*\)"
     r"|export\s+[^'\"]*from\s+['\"]([^'\"]+)['\"]",
 )
+_TODO_RE = re.compile(r"\b(?:todo|fixme)\b", re.IGNORECASE)
 
 
 def _strip_noise(src: str) -> str:
     return _SKIP_RE.sub(lambda m: " " * len(m.group(0)), src)
+
+
+def _count_todos(src: str) -> int:
+    """TODO/FIXME только в комментариях (// и /* */).
+
+    Лево-направленный скан комментариев и литералов: // внутри кавычек
+    (например в URL) комментарием не считается.
+    """
+    return sum(1 for m in _SKIP_RE.finditer(src)
+               if m.group("com") and _TODO_RE.search(m.group("com")))
 
 
 def analyze_js_file(path: str, src: str) -> dict | None:
@@ -48,9 +60,10 @@ def analyze_js_file(path: str, src: str) -> dict | None:
     lines = src.splitlines()
     loc = len(lines)
     sloc = sum(1 for ln in lines if ln.strip())
-    todos = sum(1 for ln in lines if "TODO" in ln.upper() or "FIXME" in ln.upper())
+    todos = _count_todos(src)
 
     funcs = 0
+    long_funcs = 0
     cog = 0
     cc = 1
     for m in _FUNC_RE.finditer(clean):
@@ -82,6 +95,8 @@ def analyze_js_file(path: str, src: str) -> dict | None:
         f_cc = 1 + len(_COMPLEXITY_RE.findall(body))
         cc += f_cc
         cog += f_cc  # приближение: без учёта вложенности
+        if f_cc >= LONG_FUNC_COG:
+            long_funcs += 1
 
     mi = max(0.0, min(100.0, 110 - 0.1 * sloc - 4 * (cc / max(funcs, 1))))
 
@@ -106,6 +121,7 @@ def analyze_js_file(path: str, src: str) -> dict | None:
         "cc": cc,
         "mi": round(mi, 2),
         "funcs": funcs,
+        "long_funcs": long_funcs,
         "classes": 0,
         "abstract": 0,
         "lcom4_max": 0,
