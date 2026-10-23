@@ -4,8 +4,7 @@
 - когнитивная сложность (адаптация SonarSource: +1+вложенность за if/for/while/except,
   elif — плоский +1, логические операторы и тернарники учитываются);
 - цикломатическая сложность;
-- индекс поддерживаемости MI — через radon (если установлен, эталонный расчёт:
-  Halstead + CC + LLOC), fallback — собственная формула по SLOC;
+- индекс поддерживаемости MI (формула по Halstead + CC + SLOC, откалибрована по radon);
 - LCOM4 (связность методов класса — детектор God Object);
 - абстрактность классов (ABC/Protocol/abstractmethod) — для Distance from Main Sequence;
 - импорты (для графа зацепления Ca/Ce);
@@ -87,15 +86,6 @@ def maintainability_index(sloc: int, cc: int, volume: float) -> float:
     raw = (171 - 5.2 * math.log(volume) - 0.23 * cc - 16.2 * math.log(sloc)) * 100 / 171
     raw = max(0.0, min(100.0, raw))
     return 100.0 * (1.0 - math.exp(-4.6 * raw / 100.0))
-
-
-def mi_via_radon(src: str) -> float | None:
-    """Эталонный MI через radon (работает по строке исходника — годится для git-истории)."""
-    try:
-        from radon.metrics import mi_visit
-        return max(0.0, min(100.0, mi_visit(src, multi=True)))
-    except Exception:  # noqa: BLE001 — radon нет или не осилил код
-        return None
 
 
 # --------------------------------------------- когнитивная / цикломатическая

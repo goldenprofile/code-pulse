@@ -4,7 +4,7 @@
 - временное зацепление: файлы, меняющиеся одним коммитом без общей причины;
 - churn по неделям;
 - code age: доля кода, который не трогали ≥90 дней;
-- активность по дням — для рёбер временного зацепления между репозиториями.
+- рёбра временного зацепления между репозиториями по общим активным дням.
 """
 from __future__ import annotations
 
@@ -119,14 +119,6 @@ def code_age(commits: List[dict], files_map: Dict[str, dict]) -> dict:
         "buckets": buckets,
         "stale_share": round(buckets["stale"] / total, 3) if total else 0.0,
     }
-
-
-def activity_dates(commits: List[dict]) -> set:
-    """Дни (YYYY-MM-DD), когда были коммиты — для межрепозиторных рёбер."""
-    dates = set()
-    for c in commits:
-        dates.add(datetime.fromtimestamp(c["ts"], tz=timezone.utc).strftime("%Y-%m-%d"))
-    return dates
 
 
 def repo_temporal_edges(activity: Dict[str, set], min_days: int = 4) -> list[dict]:
