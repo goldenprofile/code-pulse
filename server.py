@@ -7,6 +7,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import TypedDict, cast
 from urllib.parse import parse_qs, urlparse
 
 from events import stream_events
@@ -14,6 +15,16 @@ from pulse import gitstats, scanner
 from pulse.gitutil import commit_log_numstat
 from report import send_report
 from staticfiles import serve_static
+
+
+class _SettingsItem(TypedDict, total=False):
+    """Строка списка проектов в /api/settings; stack/score — только для известных."""
+    name: str
+    excluded: bool
+    is_git: bool
+    tracked: bool
+    stack: str
+    score: float
 
 
 class App:
@@ -159,7 +170,8 @@ class App:
         if now - self._git_cache_ts > 600:
             self._refresh_graph_cache()
         projects = self.store.projects()
-        activity: dict[str, set] = self._git_cache.get("activity", {})
+        # в _refresh_graph_cache() под этим ключом лежит ровно dict[str, set]
+        activity = cast(dict[str, set], self._git_cache.get("activity", {}))
         nodes = []
         for p in projects:
             snaps = self.store.snapshots(p["name"])
@@ -289,9 +301,9 @@ class App:
         """Список проектов на диске + текущие исключения."""
         excludes = self.store.get_excludes()
         known = {p["name"]: p for p in self.store.projects()}
-        items = []
+        items: list[_SettingsItem] = []
         for d in scanner.discover_projects(self.root, set()):
-            item = {
+            item: _SettingsItem = {
                 "name": d.name,
                 "excluded": d.name in excludes,
                 "is_git": (d / ".git").exists(),
@@ -369,7 +381,7 @@ def make_handler(app: App):
             Чужой домен, перепривязанный на 127.0.0.1, приходит со своим Host —
             без этой проверки его страница читала бы API (пути, ветки, файлы).
             """
-            port = self.server.server_address[1]
+            port = cast(tuple[str, int], self.server.server_address)[1]
             host = (self.headers.get("Host") or "").lower()
             return host in {f"127.0.0.1:{port}", f"localhost:{port}"}
 

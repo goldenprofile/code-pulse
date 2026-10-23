@@ -21,8 +21,9 @@ from pulse.metrics_py import (
 )
 
 
-def cog_cc(src: str):
+def cog_cc(src: str) -> tuple[int, int]:
     rep = analyze_python_file("a.py", src)
+    assert rep is not None  # в тестах источник всегда парсится
     return rep["cog"], rep["cc"]
 
 

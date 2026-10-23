@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from typing import Dict, List
+from typing import Dict, Iterator, List, TypedDict
 
 SRC_ROOTS = {"src", "lib", "app", "sources"}
 
@@ -74,21 +74,21 @@ def _resolve_js(file_dir_parts: List[str], spec: str, known: set) -> str | None:
     return pkg if pkg in known else None
 
 
-def _scc_count(nodes: set, edges: Dict[str, set]) -> int:
+def _scc_count(nodes: set[str], edges: Dict[str, set[str]]) -> int:
     """Число компонент сильной связности размера ≥2 (алгоритм Косарайю, итеративно)."""
     if not nodes:
         return 0
-    radj: Dict[str, set] = defaultdict(set)
+    radj: Dict[str, set[str]] = defaultdict(set)
     for u, vs in edges.items():
         for v in vs:
             radj[v].add(u)
     # 1-й проход: порядок завершения
-    visited: set = set()
-    order: list = []
+    visited: set[str] = set()
+    order: list[str] = []
     for start in nodes:
         if start in visited:
             continue
-        stack = [(start, iter(edges.get(start, ())))]
+        stack: list[tuple[str, Iterator[str]]] = [(start, iter(edges.get(start, ())))]
         visited.add(start)
         while stack:
             node, it = stack[-1]
@@ -103,24 +103,38 @@ def _scc_count(nodes: set, edges: Dict[str, set]) -> int:
                 order.append(node)
                 stack.pop()
     # 2-й проход по обратному графу
-    visited2: set = set()
+    visited2: set[str] = set()
     scc_big = 0
     for start in reversed(order):
         if start in visited2:
             continue
-        comp: list = []
-        stack = [start]
+        comp: list[str] = []
+        stack2 = [start]
         visited2.add(start)
-        while stack:
-            node = stack.pop()
+        while stack2:
+            node = stack2.pop()
             comp.append(node)
             for nxt in radj.get(node, ()):
                 if nxt in nodes and nxt not in visited2:
                     visited2.add(nxt)
-                    stack.append(nxt)
+                    stack2.append(nxt)
         if len(comp) >= 2:
             scc_big += 1
     return scc_big
+
+
+# функциональный синтаксис: ключи I/A/D — общепринятые метрики Мартина,
+# классовый синтаксис с атрибутом `I` ловит ruff E741
+_PkgMetrics = TypedDict("_PkgMetrics", {
+    "pkg": str,
+    "sloc": int,
+    "ca": int,
+    "ce": int,
+    "I": float,
+    "A": float,
+    "D": float,
+    "classes": int,
+})
 
 
 def coupling_metrics(reports: Dict[str, dict]) -> dict:
@@ -154,7 +168,7 @@ def coupling_metrics(reports: Dict[str, dict]) -> dict:
         for t in targets:
             edges_in[t].add(src)
 
-    packages = []
+    packages: List[_PkgMetrics] = []
     i_vals, d_vals = [], []
     for pkg in sorted(known):
         ce, ca = len(edges_out.get(pkg, ())), len(edges_in.get(pkg, ()))

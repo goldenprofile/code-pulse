@@ -78,7 +78,8 @@ class Store:
 
     def get_excludes(self) -> set:
         try:
-            return set(json.loads(self.get_meta("exclude_projects", "[]")))
+            raw = self.get_meta("exclude_projects", "[]")
+            return set(json.loads(raw)) if raw else set()
         except (json.JSONDecodeError, TypeError):
             return set()
 

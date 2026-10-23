@@ -14,7 +14,6 @@ from pathlib import Path
 
 from pulse import gitutil
 from pulse.gitstats import (
-    WEEK,
     _week_start,
     churn_weekly,
     code_age,

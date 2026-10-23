@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List
+from typing import Dict, List, TypedDict
 
 
 WEEK = 7 * 86400
@@ -121,10 +121,17 @@ def code_age(commits: List[dict], files_map: Dict[str, dict]) -> dict:
     }
 
 
-def repo_temporal_edges(activity: Dict[str, set], min_days: int = 4) -> list[dict]:
+class _RepoEdge(TypedDict):
+    """Ребро временного зацепления между двумя репозиториями."""
+    a: str
+    b: str
+    days: int
+
+
+def repo_temporal_edges(activity: Dict[str, set], min_days: int = 4) -> list[_RepoEdge]:
     """Рёбра между репозиториями: ≥min_days общих активных дней за период."""
     names = sorted(activity)
-    edges = []
+    edges: list[_RepoEdge] = []
     for i, a in enumerate(names):
         for b in names[i + 1:]:
             shared = len(activity[a] & activity[b])

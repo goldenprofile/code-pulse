@@ -1,6 +1,5 @@
 """Тесты вынесенных из server.py чистых функций: report.py, events.py, staticfiles.py."""
 import io
-import json
 
 from events import encode_frame
 from report import filename_slug, fmt, fmt_signed, render_report

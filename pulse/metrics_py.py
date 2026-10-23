@@ -18,7 +18,7 @@ import math
 import re
 import tokenize
 from collections import Counter
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, cast
 
 MAX_SOURCE_BYTES = 400_000
 LONG_FUNC_COG = 20  # cognitive-сложность, с которой функция считается «длинной»
@@ -39,7 +39,10 @@ def halstead_volume(tree: ast.AST) -> float:
             if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value,
                                                                      ast.Constant) \
                     and isinstance(body[0].value.value, str):
-                doc_spans.append((body[0].value.lineno, body[0].value.end_lineno))
+                # end_lineno у узлов из ast.parse всегда проставлен; None бывает
+                # только в AST, собранном вручную
+                doc_spans.append((body[0].value.lineno,
+                                  cast(int, body[0].value.end_lineno)))
 
     def in_docstring(lineno: int) -> bool:
         return any(a <= lineno <= b for a, b in doc_spans)
@@ -102,10 +105,9 @@ def _function_complexity(fn: ast.AST) -> Tuple[int, int, int]:
     # statement тела/orelse родителя — тоже узел обхода), flat — плоский +1 для elif.
     def rec(node: ast.AST, depth: int, flat: bool = False) -> None:
         nonlocal cog, cc, deepest
-        t = type(node)
-        if t in _FUNC_NODES and node is not fn:
+        if isinstance(node, _FUNC_NODES) and node is not fn:
             return  # вложенная функция анализируется отдельно
-        if t is ast.If:
+        if isinstance(node, ast.If):
             cog += 1 if flat else 1 + depth
             cc += 1
             if not flat:
@@ -116,7 +118,7 @@ def _function_complexity(fn: ast.AST) -> Tuple[int, int, int]:
             for b in node.orelse:
                 # первый statement orelse — elif: плоский +1 без надбавки
                 rec(b, depth + 1, flat=(b is node.orelse[0]))
-        elif t in (ast.For, ast.AsyncFor, ast.While):
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
             cog += 1 + depth
             cc += 1
             deepest = max(deepest, depth + 1)
@@ -124,34 +126,34 @@ def _function_complexity(fn: ast.AST) -> Tuple[int, int, int]:
                 rec(b, depth + 1)
             for b in node.orelse:
                 rec(b, depth + 1)
-        elif t is ast.ExceptHandler:
+        elif isinstance(node, ast.ExceptHandler):
             cog += 1 + depth
             cc += 1
             deepest = max(deepest, depth + 1)
             for b in node.body:
                 rec(b, depth + 1)
-        elif t is ast.BoolOp:
+        elif isinstance(node, ast.BoolOp):
             extra = len(node.values) - 1
             cog += extra
             cc += extra
             for v in node.values:
                 rec(v, depth)
-        elif t is ast.IfExp:
+        elif isinstance(node, ast.IfExp):
             cog += 1 + depth
             cc += 1
             for c in ast.iter_child_nodes(node):
                 rec(c, depth)
-        elif t is ast.comprehension:
+        elif isinstance(node, ast.comprehension):
             n_if = len(node.ifs)
             cog += 1 + n_if
             cc += 1 + n_if
             for c in ast.iter_child_nodes(node):
                 rec(c, depth)
-        elif t is ast.Assert:
+        elif isinstance(node, ast.Assert):
             cog += 1
             cc += 1
             rec(node.test, depth)
-        elif t is ast.match_case:
+        elif isinstance(node, ast.match_case):
             cog += 1
             cc += 1
             for b in node.body:
