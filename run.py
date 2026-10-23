@@ -18,9 +18,9 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT_DIR))
 
-from pulse import scanner  # noqa: E402
-from pulse.store import Store  # noqa: E402
-from server import App, serve  # noqa: E402
+from pulse import scanner
+from pulse.store import Store
+from server import App, serve
 
 CONFIG_PATH = ROOT_DIR / "config.json"
 

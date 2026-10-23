@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 
 class GitError(RuntimeError):
@@ -14,7 +13,7 @@ def run_git(repo: Path | str, *args: str, timeout: int = 120) -> str:
     """Выполнить git-команду в репозитории, вернуть stdout как текст."""
     cmd = ["git", "-c", "core.quotepath=false", *args]
     proc = subprocess.run(
-        cmd, cwd=str(repo), capture_output=True, text=True,
+        cmd, check=False, cwd=str(repo), capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=timeout,
     )
     if proc.returncode != 0:
@@ -22,7 +21,7 @@ def run_git(repo: Path | str, *args: str, timeout: int = 120) -> str:
     return proc.stdout
 
 
-def try_git(repo: Path | str, *args: str, timeout: int = 120) -> Optional[str]:
+def try_git(repo: Path | str, *args: str, timeout: int = 120) -> str | None:
     """Как run_git, но при ошибке возвращает None (не падает)."""
     try:
         return run_git(repo, *args, timeout=timeout)

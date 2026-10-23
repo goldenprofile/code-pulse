@@ -18,7 +18,7 @@ import math
 import re
 import tokenize
 from collections import Counter
-from typing import Dict, List, Tuple, cast
+from typing import cast
 
 MAX_SOURCE_BYTES = 400_000
 LONG_FUNC_COG = 20  # cognitive-сложность, с которой функция считается «длинной»
@@ -69,9 +69,10 @@ def halstead_volume(tree: ast.AST) -> float:
             operands[node.id] += 1
         elif isinstance(node, ast.arg):
             operands[node.arg] += 1
-        elif isinstance(node, ast.Constant):
-            if not (isinstance(node.value, str) and in_docstring(node.lineno)):
-                operands[repr(node.value)[:60]] += 1
+        elif isinstance(node, ast.Constant) and not (
+            isinstance(node.value, str) and in_docstring(node.lineno)
+        ):
+            operands[repr(node.value)[:60]] += 1
     n = len(ops) + len(operands)
     total = sum(ops.values()) + sum(operands.values())
     return total * math.log2(n) if n > 0 and total > 0 else 0.0
@@ -92,7 +93,7 @@ def maintainability_index(sloc: int, cc: int, volume: float) -> float:
 
 
 # --------------------------------------------- когнитивная / цикломатическая
-def _function_complexity(fn: ast.AST) -> Tuple[int, int, int]:
+def _function_complexity(fn: ast.AST) -> tuple[int, int, int]:
     """(cognitive, cyclomatic, max_nesting) для тела функции или модуля.
 
     Вложенные функции не входят в родителя — они анализируются отдельно.
@@ -169,7 +170,7 @@ def _function_complexity(fn: ast.AST) -> Tuple[int, int, int]:
 # --------------------------------------------------------------------- LCOM4
 class _UF:
     def __init__(self) -> None:
-        self.parent: Dict[str, str] = {}
+        self.parent: dict[str, str] = {}
 
     def add(self, x: str) -> None:
         self.parent.setdefault(x, x)
@@ -192,7 +193,7 @@ class _UF:
 
 def _lcom4(cls: ast.ClassDef) -> int:
     """LCOM4: число компонент связности методов класса (1 — хорошо, ≥5 — God Object)."""
-    methods: Dict[str, Tuple[set, set]] = {}
+    methods: dict[str, tuple[set, set]] = {}
     for item in cls.body:
         if isinstance(item, _FUNC_NODES):
             names = {d.id for d in item.decorator_list if isinstance(d, ast.Name)}
@@ -239,9 +240,9 @@ def _is_abstract(cls: ast.ClassDef) -> bool:
     return False
 
 
-def file_imports(tree: ast.AST) -> List[Tuple[int, str]]:
+def file_imports(tree: ast.AST) -> list[tuple[int, str]]:
     """[(level, module)] — level>0 для относительных импортов."""
-    out: List[Tuple[int, str]] = []
+    out: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -337,9 +338,9 @@ def analyze_python_file(path: str, src: str) -> dict | None:
     }
 
 
-def analyze_python(files: Dict[str, str]) -> dict:
+def analyze_python(files: dict[str, str]) -> dict:
     """Анализ набора python-файлов: {path: source} → {files: {...}, totals: {...}}."""
-    reports: Dict[str, dict] = {}
+    reports: dict[str, dict] = {}
     for path, src in files.items():
         rep = analyze_python_file(path, src)
         if rep:
@@ -349,7 +350,7 @@ def analyze_python(files: Dict[str, str]) -> dict:
     return {"files": reports, "totals": totals}
 
 
-def _totals_from_reports(reports: Dict[str, dict]) -> dict:
+def _totals_from_reports(reports: dict[str, dict]) -> dict:
     sloc = sum(r["sloc"] for r in reports.values())
     cog = sum(r["cog"] for r in reports.values())
     cc = sum(r["cc"] for r in reports.values())

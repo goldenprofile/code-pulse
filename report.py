@@ -106,8 +106,8 @@ def render_report(name: str, detail: dict, days: int, hotspots: list,
             for p in pkgs
         ]
         lines += ["",
-                  f"Циклов зависимостей: {coupling.get('cycles', 0)} · "
-                  f"нарушений (I>0.5 при Ca≥3): {coupling.get('violations', 0)}"]
+                  (f"Циклов зависимостей: {coupling.get('cycles', 0)} · "
+                   f"нарушений (I>0.5 при Ca≥3): {coupling.get('violations', 0)}")]
     else:
         lines.append("Нет данных о пакетах.")
 
@@ -120,8 +120,8 @@ def render_report(name: str, detail: dict, days: int, hotspots: list,
             f"- < 7 дней: {buckets.get('d7', 0)} SLOC",
             f"- < 30 дней: {buckets.get('d30', 0)} SLOC",
             f"- < 90 дней: {buckets.get('d90', 0)} SLOC",
-            f"- застой (≥ 90 дней): {stale} SLOC"
-            f" ({round((age.get('stale_share') or 0) * 100)}%)",
+            (f"- застой (≥ 90 дней): {stale} SLOC"
+             f" ({round((age.get('stale_share') or 0) * 100)}%)"),
         ]
     else:
         lines.append("Нет данных.")

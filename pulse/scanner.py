@@ -8,7 +8,6 @@ import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, Optional
 
 from pulse.analyze import analyze_sources
 from pulse.gitutil import commit_log_trees, try_git
@@ -46,7 +45,7 @@ def discover_projects(root: Path, exclude_names: set[str] | None = None) -> list
     return projects
 
 
-def git_worktree_paths(root: Path) -> Optional[list[str]]:
+def git_worktree_paths(root: Path) -> list[str] | None:
     """Список файлов ворктри по мнению git: индекс + неотслеженные, минус
     .gitignore — тот же набор, который `git archive` возьмёт из истории.
 
@@ -58,7 +57,7 @@ def git_worktree_paths(root: Path) -> Optional[list[str]]:
         # -z: пути без экранирования не-ASCII; один вызов git на проект
         proc = subprocess.run(
             ["git", "ls-files", "-co", "--exclude-standard", "-z"],
-            cwd=str(root), capture_output=True, timeout=60)
+            check=False, cwd=str(root), capture_output=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         return None
     if proc.returncode != 0:
@@ -77,9 +76,9 @@ def _accept_source(rel_path: str) -> bool:
     return ext in SOURCE_EXTS and ".min." not in name
 
 
-def _read_git_paths(root: Path, paths: list[str]) -> Dict[str, str]:
+def _read_git_paths(root: Path, paths: list[str]) -> dict[str, str]:
     """Прочитать файлы по списку путей git, применяя лимиты размера и качества."""
-    files: Dict[str, str] = {}
+    files: dict[str, str] = {}
     for rel in paths:
         if len(files) >= MAX_FILES or not _accept_source(rel):
             continue
@@ -96,9 +95,9 @@ def _read_git_paths(root: Path, paths: list[str]) -> Dict[str, str]:
     return files
 
 
-def _walk_worktree(root: Path) -> Dict[str, str]:
+def _walk_worktree(root: Path) -> dict[str, str]:
     """Fallback для проектов без git: обход диска с исключениями."""
-    files: Dict[str, str] = {}
+    files: dict[str, str] = {}
     count = 0
 
     def walk(dir_path: Path, prefix: str) -> None:
@@ -134,7 +133,7 @@ def _walk_worktree(root: Path) -> Dict[str, str]:
     return files
 
 
-def collect_worktree_files(root: Path) -> Dict[str, str]:
+def collect_worktree_files(root: Path) -> dict[str, str]:
     """Живое состояние проекта: для git-репозиториев берём набор файлов от git
     (совпадает с набором истории — без ложных дельт), иначе обход диска."""
     paths = git_worktree_paths(root)
@@ -174,13 +173,13 @@ def worker_analyze(task: tuple) -> dict:
     return {"task": task, "metrics": metrics, "n_files": len(files)}
 
 
-def _archive_files(repo: Path, tree: str) -> Dict[str, str]:
+def _archive_files(repo: Path, tree: str) -> dict[str, str]:
     """Файлы git-дерева без checkout: git archive → tar → память."""
     proc = subprocess.run(["git", "archive", "--format=tar", tree],
-                          cwd=str(repo), capture_output=True, timeout=180)
+                          check=False, cwd=str(repo), capture_output=True, timeout=180)
     if proc.returncode != 0:
         raise RuntimeError(f"git archive {tree[:8]}: {proc.stderr.decode()[:200]}")
-    files: Dict[str, str] = {}
+    files: dict[str, str] = {}
     count = 0
     with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as tf:
         for member in tf:
@@ -212,7 +211,7 @@ def _archive_files(repo: Path, tree: str) -> Dict[str, str]:
 
 
 # ---------------------------------------------------------- live-состояние
-def live_state(repo: Path) -> Optional[dict]:
+def live_state(repo: Path) -> dict | None:
     if not (repo / ".git").exists():
         return None
     branch = try_git(repo, "symbolic-ref", "--short", "HEAD")
@@ -223,7 +222,7 @@ def live_state(repo: Path) -> Optional[dict]:
 
     status_out = try_git(repo, "status", "--porcelain=v1", "-b") or ""
     ahead = behind = 0
-    dirty: Dict[str, int] = {"M": 0, "A": 0, "D": 0, "?": 0, "U": 0}
+    dirty: dict[str, int] = {"M": 0, "A": 0, "D": 0, "?": 0, "U": 0}
     dirty_files: list[str] = []
     for line in status_out.splitlines():
         if line.startswith("##"):
@@ -355,7 +354,7 @@ def scan_all(root: Path, store, status: Status, exclude: set | None = None,
         cleanup = False
     tasks = [(str(p), None) for p in projects]
     status.update(total=len(tasks), current="")
-    results: Dict[str, dict] = {}
+    results: dict[str, dict] = {}
     if tasks:
         with ProcessPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(worker_analyze, t): t for t in tasks}

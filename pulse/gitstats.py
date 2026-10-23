@@ -9,23 +9,22 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, TypedDict
-
+from datetime import UTC, datetime, timedelta
+from typing import TypedDict
 
 WEEK = 7 * 86400
 
 
 def _week_start(ts: int) -> int:
     """Начало ISO-недели (понедельник, 00:00 UTC) для данного ts."""
-    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    dt = datetime.fromtimestamp(ts, tz=UTC)
     midnight = dt.replace(hour=0, minute=0, second=0, microsecond=0)
     return int((midnight - timedelta(days=dt.weekday())).timestamp())
 
 
-def churn_weekly(commits: List[dict], weeks: int = 6) -> list[dict]:
-    now = int(datetime.now(tz=timezone.utc).timestamp())
-    buckets: Dict[int, dict] = {}
+def churn_weekly(commits: list[dict], weeks: int = 6) -> list[dict]:
+    now = int(datetime.now(tz=UTC).timestamp())
+    buckets: dict[int, dict] = {}
     start = _week_start(now) - (weeks - 1) * WEEK
     for w in range(weeks):
         buckets[start + w * WEEK] = {"ts": start + w * WEEK, "add": 0, "del": 0, "commits": 0}
@@ -41,9 +40,9 @@ def churn_weekly(commits: List[dict], weeks: int = 6) -> list[dict]:
     return sorted(buckets.values(), key=lambda b: b["ts"])
 
 
-def hotspots(commits: List[dict], files_map: Dict[str, dict], top: int = 12) -> list[dict]:
+def hotspots(commits: list[dict], files_map: dict[str, dict], top: int = 12) -> list[dict]:
     """score = текущая когнитивная сложность файла × число коммитов за период."""
-    stats: Dict[str, dict] = {}
+    stats: dict[str, dict] = {}
     for c in commits:
         for path, add, dele in c["files"]:
             st = stats.setdefault(path, {"commits": 0, "add": 0, "del": 0})
@@ -69,7 +68,7 @@ def hotspots(commits: List[dict], files_map: Dict[str, dict], top: int = 12) -> 
     return result[:top]
 
 
-def temporal_coupling(commits: List[dict], min_shared: int = 3,
+def temporal_coupling(commits: list[dict], min_shared: int = 3,
                       share: float = 0.4, top: int = 15) -> list[dict]:
     """Пары файлов, стабильно меняющихся одним коммитом."""
     pair_counts: Counter = Counter()
@@ -93,11 +92,11 @@ def temporal_coupling(commits: List[dict], min_shared: int = 3,
     return result
 
 
-def code_age(commits: List[dict], files_map: Dict[str, dict]) -> dict:
+def code_age(commits: list[dict], files_map: dict[str, dict]) -> dict:
     """Доля SLOC по возрасту последнего изменения файла."""
-    now = int(datetime.now(tz=timezone.utc).timestamp())
+    now = int(datetime.now(tz=UTC).timestamp())
     if commits:
-        last_touch: Dict[str, int] = {}
+        last_touch: dict[str, int] = {}
         for c in commits:  # от новых к старым — первое вхождение и есть последнее
             for path, _a, _d in c["files"]:
                 last_touch.setdefault(path, c["ts"])
@@ -128,7 +127,7 @@ class _RepoEdge(TypedDict):
     days: int
 
 
-def repo_temporal_edges(activity: Dict[str, set], min_days: int = 4) -> list[_RepoEdge]:
+def repo_temporal_edges(activity: dict[str, set], min_days: int = 4) -> list[_RepoEdge]:
     """Рёбра между репозиториями: ≥min_days общих активных дней за период."""
     names = sorted(activity)
     edges: list[_RepoEdge] = []

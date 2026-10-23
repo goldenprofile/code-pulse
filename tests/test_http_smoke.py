@@ -80,7 +80,7 @@ class ServeSmokeTest(unittest.TestCase):
         self.assertTrue(body)
 
     def test_overview_json_not_empty(self):
-        status, headers, body = self.get("/api/overview")
+        status, _headers, body = self.get("/api/overview")
         self.assertEqual(status, 200)
         data = json.loads(body)
         self.assertIn("generated", data)

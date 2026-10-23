@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-from typing import Dict
 
 from pulse.coupling import coupling_metrics
 from pulse.duplication import duplication_ratio
@@ -10,13 +9,13 @@ from pulse.metrics_js import JS_EXTS, analyze_js
 from pulse.metrics_py import analyze_python
 
 
-def analyze_sources(files: Dict[str, str]) -> dict:
+def analyze_sources(files: dict[str, str]) -> dict:
     """files: {relative_path: source} → полный словарь метрик проекта/снапшота."""
     py_files = {p: s for p, s in files.items() if p.endswith(".py")}
     js_files = {p: s for p, s in files.items()
                 if PurePosixPath(p).suffix.lower() in JS_EXTS}
 
-    file_reports: Dict[str, dict] = {}
+    file_reports: dict[str, dict] = {}
     totals = {
         "files": 0, "sloc": 0, "loc": 0, "cog": 0, "cc": 0, "funcs": 0,
         "classes": 0, "abstract": 0, "lcom4_bad": 0, "lcom4_max": 0,
@@ -48,7 +47,7 @@ def analyze_sources(files: Dict[str, str]) -> dict:
     dup = duplication_ratio(py_files | js_files)
     coupling = coupling_metrics(file_reports)
 
-    langs: Dict[str, int] = {}
+    langs: dict[str, int] = {}
     for rep in file_reports.values():
         langs[rep["lang"]] = langs.get(rep["lang"], 0) + rep["sloc"]
 

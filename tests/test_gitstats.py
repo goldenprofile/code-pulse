@@ -9,8 +9,9 @@ import os
 import subprocess
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
 
 from pulse import gitutil
 from pulse.gitstats import (
@@ -23,7 +24,7 @@ from pulse.gitstats import (
 )
 from pulse.metrics_py import analyze_python_file
 
-NOW = int(datetime.now(tz=timezone.utc).timestamp())
+NOW = int(datetime.now(tz=UTC).timestamp())
 DAY = 86400
 # начало текущей ISO-недели + 1 час: гарантированно внутри «сегодняшнего» бакета
 THIS_WEEK = _week_start(NOW) + 3600
@@ -66,13 +67,13 @@ class ChurnWeeklyTest(unittest.TestCase):
 
 
 class HotspotsTest(unittest.TestCase):
-    FILES = {
+    FILES: ClassVar[dict] = {
         "a.py": {"cog": 3, "sloc": 10, "is_test": False},
         "b.py": {"cog": 10, "sloc": 5, "is_test": False},
         "t.py": {"cog": 100, "sloc": 50, "is_test": True},
     }
 
-    COMMITS = [
+    COMMITS: ClassVar[list] = [
         commit(THIS_WEEK, ("a.py", 100, 0), ("b.py", 10, 0)),
         commit(THIS_WEEK + 60, ("a.py", 5, 5)),
         commit(THIS_WEEK + 120, ("t.py", 50, 0)),      # тест — не хотспот

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Tuple
 
 from pulse.metrics_py import LONG_FUNC_COG
 
@@ -26,7 +25,7 @@ _SKIP_RE = re.compile(
     r"|(?P<str>'(?:\\.|[^'\\])*'"     # string
     r"|\"(?:\\.|[^\"\\])*\""          # string
     r"|`(?:\\.|[^`\\])*`)",           # template string
-    re.S,
+    re.DOTALL,
 )
 _COMPLEXITY_RE = re.compile(r"\b(if|for|while|case|catch)\b|&&|\|\||\?\s")
 _IMPORT_RE = re.compile(
@@ -106,7 +105,7 @@ def analyze_js_file(path: str, src: str) -> dict | None:
     is_test = (".test." in fname or ".spec." in fname or fname.endswith(".d.ts")
                or "tests" in parts[:-1] or "__tests__" in parts[:-1])
 
-    imports: List[Tuple[int, str]] = []
+    imports: list[tuple[int, str]] = []
     for m in _IMPORT_RE.finditer(src):
         spec = next((g for g in m.groups() if g), None)
         if spec:
@@ -132,9 +131,9 @@ def analyze_js_file(path: str, src: str) -> dict | None:
     }
 
 
-def analyze_js(files: Dict[str, str]) -> dict:
+def analyze_js(files: dict[str, str]) -> dict:
     from pulse.metrics_py import _totals_from_reports
-    reports: Dict[str, dict] = {}
+    reports: dict[str, dict] = {}
     for path, src in files.items():
         rep = analyze_js_file(path, src)
         if rep:

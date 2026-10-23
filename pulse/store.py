@@ -6,7 +6,6 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Optional
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -71,7 +70,7 @@ class Store:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
             self._conn.commit()
 
-    def get_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
+    def get_meta(self, key: str, default: str | None = None) -> str | None:
         with self._lock:
             row = self._conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
             return row["value"] if row else default

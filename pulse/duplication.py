@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Dict
 
 WINDOW = 6
 
@@ -18,17 +17,17 @@ def _normalize_lines(src: str, is_python: bool) -> list[str]:
         s = raw.strip().lower()
         if not s:
             continue
-        if is_python and (s.startswith("#") or s.startswith('"""') or s.startswith("'''")):
+        if is_python and s.startswith(("#", '\"\"\"', "'''")):
             continue
-        if s.startswith("//") or s.startswith("/*") or s.startswith("*"):
+        if s.startswith(("//", "/*", "*")):
             continue
         out.append(s)
     return out
 
 
-def duplication_ratio(files: Dict[str, str]) -> float:
+def duplication_ratio(files: dict[str, str]) -> float:
     counts: Counter = Counter()
-    normalized: Dict[str, list[str]] = {}
+    normalized: dict[str, list[str]] = {}
     for path, src in files.items():
         lines = _normalize_lines(src, path.endswith(".py"))
         normalized[path] = lines

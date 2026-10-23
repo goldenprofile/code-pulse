@@ -11,12 +11,13 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from typing import Dict, Iterator, List, TypedDict
+from collections.abc import Iterator
+from typing import TypedDict
 
 SRC_ROOTS = {"src", "lib", "app", "sources"}
 
 
-def pkg_of_dir(parts: List[str]) -> str:
+def pkg_of_dir(parts: list[str]) -> str:
     parts = [p for p in parts if p not in ("", ".")]
     if parts and parts[0] in SRC_ROOTS and len(parts) > 1:
         parts = parts[1:]
@@ -28,7 +29,7 @@ def pkg_of_file(path: str) -> str:
     return pkg_of_dir(parts)
 
 
-def _resolve_py(file_pkg_parts: List[str], level: int, module: str,
+def _resolve_py(file_pkg_parts: list[str], level: int, module: str,
                 known: set) -> str | None:
     """Резолв python-импорта в имя внутреннего пакета (или None — внешний)."""
     base = list(file_pkg_parts)
@@ -51,13 +52,13 @@ def _resolve_py(file_pkg_parts: List[str], level: int, module: str,
     return pkg if pkg in known else None
 
 
-def _resolve_js(file_dir_parts: List[str], spec: str, known: set) -> str | None:
+def _resolve_js(file_dir_parts: list[str], spec: str, known: set) -> str | None:
     if not spec.startswith("."):
         pkg = spec.split("/")[0].lstrip("@")
         return pkg if pkg in known else None
     parts = list(file_dir_parts)
     rest = spec
-    while rest.startswith("./") or rest.startswith("../") or rest in (".", ".."):
+    while rest.startswith(("./", "../")) or rest in (".", ".."):
         if rest.startswith("../"):
             parts = parts[:-1] if parts else parts
             rest = rest[3:]
@@ -74,11 +75,11 @@ def _resolve_js(file_dir_parts: List[str], spec: str, known: set) -> str | None:
     return pkg if pkg in known else None
 
 
-def _scc_count(nodes: set[str], edges: Dict[str, set[str]]) -> int:
+def _scc_count(nodes: set[str], edges: dict[str, set[str]]) -> int:
     """Число компонент сильной связности размера ≥2 (алгоритм Косарайю, итеративно)."""
     if not nodes:
         return 0
-    radj: Dict[str, set[str]] = defaultdict(set)
+    radj: dict[str, set[str]] = defaultdict(set)
     for u, vs in edges.items():
         for v in vs:
             radj[v].add(u)
@@ -137,7 +138,7 @@ _PkgMetrics = TypedDict("_PkgMetrics", {
 })
 
 
-def coupling_metrics(reports: Dict[str, dict]) -> dict:
+def coupling_metrics(reports: dict[str, dict]) -> dict:
     """reports: {path: file_report} (из analyze_python/analyze_js)."""
     known = {pkg_of_file(p) for p in reports}
     known.discard(".")
@@ -145,7 +146,7 @@ def coupling_metrics(reports: Dict[str, dict]) -> dict:
     pkg_classes: Counter = Counter()
     pkg_abstract: Counter = Counter()
     pkg_sloc: Counter = Counter()
-    edges_out: Dict[str, set] = defaultdict(set)
+    edges_out: dict[str, set] = defaultdict(set)
     edge_count: Counter = Counter()
 
     for path, rep in reports.items():
@@ -163,12 +164,12 @@ def coupling_metrics(reports: Dict[str, dict]) -> dict:
                 edges_out[pkg].add(target)
                 edge_count[(pkg, target)] += 1
 
-    edges_in: Dict[str, set] = defaultdict(set)
+    edges_in: dict[str, set] = defaultdict(set)
     for src, targets in edges_out.items():
         for t in targets:
             edges_in[t].add(src)
 
-    packages: List[_PkgMetrics] = []
+    packages: list[_PkgMetrics] = []
     i_vals, d_vals = [], []
     for pkg in sorted(known):
         ce, ca = len(edges_out.get(pkg, ())), len(edges_in.get(pkg, ()))

@@ -5,6 +5,7 @@ import json
 import queue
 import threading
 import time
+from datetime import UTC
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TypedDict, cast
@@ -202,9 +203,9 @@ class App:
                 continue
             commits = commit_log_numstat(path, 30)
             dates = set()
-            from datetime import datetime, timezone
+            from datetime import datetime
             for c in commits:
-                dates.add(datetime.fromtimestamp(c["ts"], tz=timezone.utc)
+                dates.add(datetime.fromtimestamp(c["ts"], tz=UTC)
                           .strftime("%Y-%m-%d"))
             activity[p["name"]] = dates
         self._git_cache["activity"] = activity
@@ -399,7 +400,7 @@ def make_handler(app: App):
             return origin is None or origin.lower() == f"http://{self.headers.get('Host', '').lower()}"
 
         # ------------------------------------------------------------ GET
-        def do_GET(self):  # noqa: N802
+        def do_GET(self):
             if not self._host_ok():
                 self._json({"error": "forbidden host"}, 403)
                 return
@@ -433,7 +434,7 @@ def make_handler(app: App):
                 self._json({"error": str(exc)}, 500)
 
         # ----------------------------------------------------------- POST
-        def do_POST(self):  # noqa: N802
+        def do_POST(self):
             if not self._host_ok() or not self._post_ok():
                 self._json({"error": "forbidden"}, 403)
                 return
