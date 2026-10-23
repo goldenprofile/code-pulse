@@ -233,13 +233,20 @@ class App:
                 pass
 
     # --------------------------------------------------------------- потоки
-    def run_refresh(self, names: set | None = None) -> None:
+    def run_refresh(self, names: set | None = None,
+                    *, acquired: bool = False) -> bool:
         """Живое сканирование; names — только указанные проекты (вкл. из настроек).
+
+        acquired=True — вызывающий уже занял фазу через status.try_begin()
+        (HTTP-обработчик занимает её синхронно, до ответа клиенту).
+        Возвращает False, если скан/бэкфилл уже идёт — второй запуск не начат.
 
         После скана — быстрый проход бэкфилла: уже посчитанные деревья
         пропускаются, добираются только новые сэмплы (в т.ч. по нововключённому
         проекту — сразу строится история за месяц).
         """
+        if not acquired and not self.status.try_begin("scan"):
+            return False
         self.emit("scan_started",
                   {"status": {**self.status.snapshot(), "phase": "scan"}})
         try:
@@ -251,11 +258,18 @@ class App:
         except Exception as exc:  # noqa: BLE001
             self.status.update(error=str(exc)[:300])
         finally:
+            # end() в finally: при ошибке посреди скана фаза не останется занятой
+            self.status.end()
             self.invalidate()
             self.emit("scan_done", {"status": self.status.snapshot()})
             self.emit("project_updated", {"names": sorted(names) if names else []})
+        return True
 
-    def run_backfill(self, days: int, step: int) -> None:
+    def run_backfill(self, days: int, step: int,
+                     *, acquired: bool = False) -> bool:
+        """Бэкфилл истории; False — операция уже идёт (см. run_refresh)."""
+        if not acquired and not self.status.try_begin("backfill"):
+            return False
         self.emit("scan_started",
                   {"status": {**self.status.snapshot(), "phase": "backfill"}})
         try:
@@ -264,9 +278,11 @@ class App:
         except Exception as exc:  # noqa: BLE001
             self.status.update(error=str(exc)[:300])
         finally:
+            self.status.end()
             self.invalidate()
             self.emit("scan_done", {"status": self.status.snapshot()})
             self.emit("project_updated", {"names": []})
+        return True
 
     # ------------------------------------------------------------- настройки
     def settings(self) -> dict:
@@ -303,8 +319,20 @@ class App:
         elif not excluded and name in excludes:
             excludes.discard(name)
             self.store.set_excludes(excludes)
-            threading.Thread(target=self.run_refresh, args=({name},),
-                             daemon=True).start()
+            # фазу занимает триггер, а не фоновый поток — иначе гонка двойного скана
+            started = self.status.try_begin("scan")
+            if started:
+                thread = threading.Thread(target=self.run_refresh, args=({name},),
+                                          kwargs={"acquired": True}, daemon=True)
+                try:
+                    thread.start()
+                except Exception:
+                    # start() сорвался (например, нет потоков): без end() фаза
+                    # останется занятой до рестарта — освободим и пробросим
+                    self.status.end()
+                    raise
+            return {"ok": True, "excludes": sorted(excludes),
+                    "scan_started": started}
         return {"ok": True, "excludes": sorted(excludes)}
 
 
@@ -398,16 +426,26 @@ def make_handler(app: App):
                 self._json({"error": "forbidden"}, 403)
                 return
             route = urlparse(self.path).path
-            if app.status.phase != "idle":
-                self._json({"ok": False, "reason": "занят", "status": app.status.snapshot()})
-                return
             try:
                 length = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(length) or b"{}") if length else {}
                 if not isinstance(body, dict):
                     raise TypeError("body must be a JSON object")
                 if route == "/api/refresh":
-                    threading.Thread(target=app.run_refresh, daemon=True).start()
+                    # try_begin атомарен: второй триггер получает «занят»,
+                    # а не запускает параллельный скан (и не ловит 500)
+                    if not app.status.try_begin("scan"):
+                        self._json({"ok": False, "reason": "занят",
+                                    "status": app.status.snapshot()})
+                        return
+                    thread = threading.Thread(target=app.run_refresh,
+                                              kwargs={"acquired": True}, daemon=True)
+                    try:
+                        thread.start()
+                    except Exception:
+                        # RuntimeError от start() — иначе фаза занята до рестарта
+                        app.status.end()
+                        raise
                     self._json({"ok": True})
                 elif route == "/api/settings/exclude":
                     name = str(body.get("name", ""))
@@ -419,8 +457,18 @@ def make_handler(app: App):
                     # бэкфилл на сотни лет по всем репозиториям
                     days = max(1, min(365, int(body.get("days", 30))))
                     step = max(1, min(30, int(body.get("step_days", 3))))
-                    threading.Thread(target=app.run_backfill, args=(days, step),
-                                     daemon=True).start()
+                    if not app.status.try_begin("backfill"):
+                        self._json({"ok": False, "reason": "занят",
+                                    "status": app.status.snapshot()})
+                        return
+                    thread = threading.Thread(target=app.run_backfill, args=(days, step),
+                                              kwargs={"acquired": True}, daemon=True)
+                    try:
+                        thread.start()
+                    except Exception:
+                        # RuntimeError от start() — иначе фаза занята до рестарта
+                        app.status.end()
+                        raise
                     self._json({"ok": True})
                 else:
                     self._json({"error": "unknown"}, 404)

@@ -85,8 +85,12 @@ def main() -> None:
 
     if not store.projects():
         print(f"✦ Скан проектов в {root} …")
-        threading.Thread(target=app.run_refresh, daemon=True).start()
+        scan_thread = threading.Thread(target=app.run_refresh, daemon=True)
+        scan_thread.start()
         console_status()
+        # бэкфилл стартует строго после скана: без join оба триггера —
+        # параллельные сканы (try_begin второй бы просто пропустил)
+        scan_thread.join()
 
     if not args.no_backfill and store.snapshot_count(history_only=True) == 0:
         print(f"✦ Бэкфилл истории за {days} дней (шаг {cfg['step_days']} дн.) …")
